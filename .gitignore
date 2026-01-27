@@ -1,0 +1,52 @@
+# Environment variables (API keys, secrets)
+.env
+config/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# Backtest results (large files)
+*.html
+backtest/*.html
+backtest/*.csv
+*.csv
+
+# Database
+*.db
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Claude artifacts
+.claude/
