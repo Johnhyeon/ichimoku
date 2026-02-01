@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 import pandas as pd
 
 from src.bybit_client import BybitClient
@@ -280,28 +282,48 @@ def main():
     print()
 
     if args.all:
-        # 전체 코인 테스트
+        # 전체 코인 테스트 (병렬)
         from src.surge_strategy import get_all_usdt_perpetuals
         test_symbols = get_all_usdt_perpetuals()
-        print(f"전체 {len(test_symbols)}개 코인 테스트")
-        all_trades = []
 
-        for i, symbol in enumerate(test_symbols):
+        workers = min(multiprocessing.cpu_count(), 8)  # 최대 8개 워커
+        print(f"전체 {len(test_symbols)}개 코인 테스트 (워커 {workers}개)")
+
+        all_trades = []
+        limit = 288 * args.days
+        completed = 0
+
+        def process_symbol(symbol):
+            """단일 심볼 백테스트 (워커용)"""
             try:
-                # 5분봉 = 하루 288개, N일 = 288*N
-                limit = 288 * args.days
-                df = data_fetcher.get_ohlcv(symbol, '5m', limit=limit)
+                client = BybitClient()
+                fetcher = DataFetcher(client)
+                df = fetcher.get_ohlcv(symbol, '5m', limit=limit)
 
                 if df is not None and len(df) > 100:
                     result = backtest_symbol(symbol, df, EARLY_SURGE_PARAMS, verbose=False)
-                    if result['trades']:
-                        all_trades.extend(result['trades'])
-                        print(f"[{i+1}/{len(test_symbols)}] {symbol}: {len(result['trades'])}건")
+                    return result['trades']
+            except:
+                pass
+            return []
 
-                if (i + 1) % 50 == 0:
-                    print(f"진행: {i+1}/{len(test_symbols)}, 총 거래: {len(all_trades)}건")
-            except Exception as e:
-                continue
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(process_symbol, sym): sym for sym in test_symbols}
+
+            for future in as_completed(futures):
+                symbol = futures[future]
+                completed += 1
+
+                try:
+                    trades = future.result()
+                    if trades:
+                        all_trades.extend(trades)
+                        print(f"[{completed}/{len(test_symbols)}] {symbol}: {len(trades)}건")
+                except Exception as e:
+                    pass
+
+                if completed % 50 == 0:
+                    print(f"진행: {completed}/{len(test_symbols)}, 총 거래: {len(all_trades)}건")
 
         print_summary(all_trades)
 
