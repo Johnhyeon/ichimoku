@@ -20,6 +20,7 @@ import argparse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 import pandas as pd
 
 from src.bybit_client import BybitClient
@@ -285,44 +286,55 @@ def main():
         from src.surge_strategy import get_all_usdt_perpetuals
         test_symbols = get_all_usdt_perpetuals()
 
-        workers = 16  # API 호출은 I/O bound라 많이 사용 가능
-        print(f"전체 {len(test_symbols)}개 코인 테스트 (워커 {workers}개)")
+        print(f"전체 {len(test_symbols)}개 코인 테스트")
 
         all_trades = []
         limit = 288 * args.days
-        completed = 0
 
-        def process_symbol(symbol):
-            """단일 심볼 백테스트 (워커용)"""
+        # 1단계: 데이터 수집 (순차, rate limit 준수)
+        print(f"\n[1/2] 데이터 수집 중...")
+        symbol_data = {}
+        for i, symbol in enumerate(test_symbols):
             try:
-                client = BybitClient()
-                fetcher = DataFetcher(client)
-                df = fetcher.get_ohlcv(symbol, '5m', limit=limit)
-
+                df = data_fetcher.get_ohlcv(symbol, '5m', limit=limit)
                 if df is not None and len(df) > 100:
-                    result = backtest_symbol(symbol, df, EARLY_SURGE_PARAMS, verbose=False)
-                    return result['trades']
-            except:
-                pass
-            return []
+                    symbol_data[symbol] = df
 
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(process_symbol, sym): sym for sym in test_symbols}
+                if (i + 1) % 50 == 0:
+                    print(f"  수집: {i+1}/{len(test_symbols)}, 유효: {len(symbol_data)}개")
+
+                time.sleep(0.1)  # Rate limit 방지
+            except:
+                continue
+
+        print(f"  완료: {len(symbol_data)}개 코인 데이터 수집")
+
+        # 2단계: 백테스트 (병렬)
+        print(f"\n[2/2] 백테스트 실행 중 (워커 8개)...")
+
+        def run_backtest(item):
+            symbol, df = item
+            result = backtest_symbol(symbol, df, EARLY_SURGE_PARAMS, verbose=False)
+            return symbol, result['trades']
+
+        completed = 0
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(run_backtest, item): item[0] for item in symbol_data.items()}
 
             for future in as_completed(futures):
                 symbol = futures[future]
                 completed += 1
 
                 try:
-                    trades = future.result()
+                    sym, trades = future.result()
                     if trades:
                         all_trades.extend(trades)
-                        print(f"[{completed}/{len(test_symbols)}] {symbol}: {len(trades)}건")
-                except Exception as e:
+                        print(f"  [{completed}/{len(symbol_data)}] {sym}: {len(trades)}건")
+                except:
                     pass
 
-                if completed % 50 == 0:
-                    print(f"진행: {completed}/{len(test_symbols)}, 총 거래: {len(all_trades)}건")
+                if completed % 100 == 0:
+                    print(f"  진행: {completed}/{len(symbol_data)}, 총 거래: {len(all_trades)}건")
 
         print_summary(all_trades)
 
