@@ -19,8 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 from src.bybit_client import BybitClient
@@ -286,7 +285,7 @@ def main():
         from src.surge_strategy import get_all_usdt_perpetuals
         test_symbols = get_all_usdt_perpetuals()
 
-        workers = min(multiprocessing.cpu_count(), 8)  # 최대 8개 워커
+        workers = 16  # API 호출은 I/O bound라 많이 사용 가능
         print(f"전체 {len(test_symbols)}개 코인 테스트 (워커 {workers}개)")
 
         all_trades = []
@@ -307,7 +306,7 @@ def main():
                 pass
             return []
 
-        with ProcessPoolExecutor(max_workers=workers) as executor:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(process_symbol, sym): sym for sym in test_symbols}
 
             for future in as_completed(futures):
