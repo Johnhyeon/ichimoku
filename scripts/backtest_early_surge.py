@@ -280,27 +280,28 @@ def main():
     print()
 
     if args.all:
-        # 여러 코인 테스트
-        test_symbols = [
-            "ZORA/USDT:USDT", "WIF/USDT:USDT", "DOGE/USDT:USDT",
-            "PEPE/USDT:USDT", "SOL/USDT:USDT", "SUI/USDT:USDT",
-        ]
+        # 전체 코인 테스트
+        from src.surge_strategy import get_all_usdt_perpetuals
+        test_symbols = get_all_usdt_perpetuals()
+        print(f"전체 {len(test_symbols)}개 코인 테스트")
         all_trades = []
 
-        for symbol in test_symbols:
-            print(f"\n[{symbol}]")
+        for i, symbol in enumerate(test_symbols):
             try:
                 # 5분봉 = 하루 288개, N일 = 288*N
                 limit = 288 * args.days
                 df = data_fetcher.get_ohlcv(symbol, '5m', limit=limit)
 
                 if df is not None and len(df) > 100:
-                    result = backtest_symbol(symbol, df, EARLY_SURGE_PARAMS, verbose=not args.quiet)
-                    all_trades.extend(result['trades'])
-                else:
-                    print("  데이터 부족")
+                    result = backtest_symbol(symbol, df, EARLY_SURGE_PARAMS, verbose=False)
+                    if result['trades']:
+                        all_trades.extend(result['trades'])
+                        print(f"[{i+1}/{len(test_symbols)}] {symbol}: {len(result['trades'])}건")
+
+                if (i + 1) % 50 == 0:
+                    print(f"진행: {i+1}/{len(test_symbols)}, 총 거래: {len(all_trades)}건")
             except Exception as e:
-                print(f"  오류: {e}")
+                continue
 
         print_summary(all_trades)
 
