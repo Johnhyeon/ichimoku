@@ -26,15 +26,18 @@ EARLY_SURGE_PARAMS = {
     # === 거래량 조건 ===
     "volume_spike_min": 10,          # 최소 거래량 스파이크 (평균 대비 배수)
     "volume_lookback": 20,           # 거래량 평균 계산 기간
+    "volume_spike_threshold": 10,    # 벡터화용 (volume_spike_min과 동일)
 
     # === 가격 조건 ===
     "price_surge_min": 5.0,          # 최소 가격 상승률 % (단일 캔들)
     "price_surge_window": 3,         # 가격 상승 확인 캔들 수 (연속)
     "price_surge_total_min": 8.0,    # 최소 총 상승률 % (window 내)
+    "price_change_threshold": 5.0,   # 벡터화용 (price_surge_min과 동일)
 
     # === 이전 상태 조건 (횡보 확인) ===
     "consolidation_lookback": 12,    # 횡보 확인 기간 (캔들 수) = 1시간
     "consolidation_range_max": 5.0,  # 횡보 최대 변동폭 % (완화)
+    "consolidation_range_pct": 5.0,  # 벡터화용 (consolidation_range_max와 동일)
 
     # === 진입 타이밍 ===
     "entry_delay_candles": 1,        # 급등 확인 후 대기 캔들 수
