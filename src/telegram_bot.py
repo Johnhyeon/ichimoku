@@ -150,6 +150,13 @@ class TelegramBot:
         self.get_trade_history_exchange_callback: Optional[Callable] = None
         self.get_transaction_log_callback: Optional[Callable] = None
 
+        # 전략별 제어 콜백
+        self.get_strategy_status_callback: Optional[Callable] = None
+        self.stop_ichimoku_callback: Optional[Callable] = None
+        self.start_ichimoku_callback: Optional[Callable] = None
+        self.stop_surge_callback: Optional[Callable] = None
+        self.start_surge_callback: Optional[Callable] = None
+
     def set_callbacks(
         self,
         get_balance: Callable,
@@ -200,6 +207,21 @@ class TelegramBot:
         self.get_account_stats_callback = get_account_stats
         self.get_trade_history_exchange_callback = get_trade_history_exchange
         self.get_transaction_log_callback = get_transaction_log
+
+    def set_strategy_callbacks(
+        self,
+        get_strategy_status: Callable = None,
+        stop_ichimoku: Callable = None,
+        start_ichimoku: Callable = None,
+        stop_surge: Callable = None,
+        start_surge: Callable = None
+    ):
+        """전략별 제어 콜백 설정"""
+        self.get_strategy_status_callback = get_strategy_status
+        self.stop_ichimoku_callback = stop_ichimoku
+        self.start_ichimoku_callback = start_ichimoku
+        self.stop_surge_callback = stop_surge
+        self.start_surge_callback = start_surge
 
     async def _safe_edit_message(self, query, text: str, reply_markup=None):
         """메시지 편집 (이미지 메시지인 경우 삭제 후 새 메시지 전송)"""
@@ -286,18 +308,39 @@ class TelegramBot:
 
     def _get_control_keyboard(self) -> InlineKeyboardMarkup:
         """봇 제어 메뉴 키보드"""
-        status_btn = "⏸ 중지" if self.running else "▶️ 시작"
-        status_data = "bot_stop" if self.running else "bot_start"
+        # 전략별 제어가 가능한 경우 (통합 봇)
+        if self.get_strategy_status_callback:
+            try:
+                status = self.get_strategy_status_callback()
+            except:
+                status = {}
 
-        keyboard = [
-            [
-                InlineKeyboardButton(status_btn, callback_data=status_data),
-                InlineKeyboardButton("🔄 동기화", callback_data="sync_positions"),
-            ],
-            [
-                InlineKeyboardButton("← 뒤로", callback_data="back_main"),
-            ],
-        ]
+            ich_running = status.get('ichimoku_running', False)
+            surge_running = status.get('surge_running', False)
+
+            ich_btn = "⛩️ 이치모쿠 ⏸" if ich_running else "⛩️ 이치모쿠 ▶️"
+            ich_data = "ctrl_ich_stop" if ich_running else "ctrl_ich_start"
+            surge_btn = "🚀 급등주 ⏸" if surge_running else "🚀 급등주 ▶️"
+            surge_data = "ctrl_surge_stop" if surge_running else "ctrl_surge_start"
+
+            keyboard = [
+                [InlineKeyboardButton(ich_btn, callback_data=ich_data)],
+                [InlineKeyboardButton(surge_btn, callback_data=surge_data)],
+                [InlineKeyboardButton("🔄 동기화", callback_data="sync_positions")],
+                [InlineKeyboardButton("← 뒤로", callback_data="back_main")],
+            ]
+        else:
+            # 단독 실행 모드
+            status_btn = "⏸ 중지" if self.running else "▶️ 시작"
+            status_data = "bot_stop" if self.running else "bot_start"
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(status_btn, callback_data=status_data),
+                    InlineKeyboardButton("🔄 동기화", callback_data="sync_positions"),
+                ],
+                [InlineKeyboardButton("← 뒤로", callback_data="back_main")],
+            ]
         return InlineKeyboardMarkup(keyboard)
 
     def _get_back_keyboard(self) -> InlineKeyboardMarkup:
@@ -354,8 +397,31 @@ class TelegramBot:
     def _build_dashboard_text(self) -> str:
         """메인 대시보드 텍스트 생성"""
         now = datetime.utcnow().strftime('%H:%M:%S')
-        status_emoji = "🟢" if self.running else "🔴"
-        status_text = "실행중" if self.running else "중지됨"
+
+        # 전략별 상태 (통합 봇)
+        strategy_status_text = ""
+        if self.get_strategy_status_callback:
+            try:
+                st = self.get_strategy_status_callback()
+                ich_emoji = "🟢" if st.get('ichimoku_running') else "🔴"
+                surge_emoji = "🟢" if st.get('surge_running') else "🔴"
+                surge_pnl = st.get('surge_daily_pnl', 0)
+                surge_limit = st.get('surge_daily_limit', 0)
+                pnl_sign = "+" if surge_pnl >= 0 else ""
+
+                strategy_status_text = f"""
+⛩️ 이치모쿠: {ich_emoji} | 🚀 급등주: {surge_emoji}
+🕐 갱신: {now} UTC
+
+📊 <b>급등주 오늘</b>
+├ 손익: <code>{pnl_sign}${surge_pnl:,.2f}</code>
+└ 한도: <code>${surge_limit:,.0f}</code>"""
+            except:
+                strategy_status_text = f"\n🕐 갱신: {now} UTC"
+        else:
+            status_emoji = "🟢" if self.running else "🔴"
+            status_text = "실행중" if self.running else "중지됨"
+            strategy_status_text = f"\n{status_emoji} 상태: <b>{status_text}</b>\n🕐 갱신: {now} UTC"
 
         # 잔고 정보
         balance_text = ""
@@ -414,9 +480,7 @@ class TelegramBot:
 
         text = f"""
 🤖 <b>Trading Bot</b>
-
-{status_emoji} 상태: <b>{status_text}</b>
-🕐 갱신: {now} UTC
+{strategy_status_text}
 {balance_text}{positions_text}
 
 ━━━━━━━━━━━━━━━━━━
@@ -576,12 +640,50 @@ class TelegramBot:
 
         # 봇 제어 메뉴
         if data == "menu_control":
-            status = "🟢 실행중" if self.running else "🔴 중지됨"
-            text = f"⚙️ <b>봇 제어</b>\n\n현재 상태: {status}"
+            if self.get_strategy_status_callback:
+                try:
+                    st = self.get_strategy_status_callback()
+                    ich_status = "🟢 실행중" if st.get('ichimoku_running') else "🔴 중지됨"
+                    surge_status = "🟢 실행중" if st.get('surge_running') else "🔴 중지됨"
+                    text = f"⚙️ <b>봇 제어</b>\n\n⛩️ 이치모쿠: {ich_status}\n🚀 급등주: {surge_status}"
+                except:
+                    text = "⚙️ <b>봇 제어</b>"
+            else:
+                status = "🟢 실행중" if self.running else "🔴 중지됨"
+                text = f"⚙️ <b>봇 제어</b>\n\n현재 상태: {status}"
             await self._safe_edit_message(query, text, self._get_control_keyboard())
             return
 
-        # 봇 시작/중지
+        # 전략별 개별 제어 (통합 봇)
+        if data == "ctrl_ich_stop":
+            if self.stop_ichimoku_callback:
+                self.stop_ichimoku_callback()
+            text = "⏸ 이치모쿠 전략 중지됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        if data == "ctrl_ich_start":
+            if self.start_ichimoku_callback:
+                self.start_ichimoku_callback()
+            text = "▶️ 이치모쿠 전략 시작됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        if data == "ctrl_surge_stop":
+            if self.stop_surge_callback:
+                self.stop_surge_callback()
+            text = "⏸ 급등주 전략 중지됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        if data == "ctrl_surge_start":
+            if self.start_surge_callback:
+                self.start_surge_callback()
+            text = "▶️ 급등주 전략 시작됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        # 봇 시작/중지 (단독 실행 모드)
         if data == "bot_start":
             if self.start_callback:
                 self.start_callback()

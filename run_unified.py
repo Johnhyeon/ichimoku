@@ -109,6 +109,27 @@ class UnifiedTrader:
             get_transaction_log=self.ichimoku._get_transaction_log
         )
 
+        # 전략별 제어 콜백
+        self.telegram_bot.set_strategy_callbacks(
+            get_strategy_status=self._get_strategy_status,
+            stop_ichimoku=self.ichimoku.stop,
+            start_ichimoku=self.ichimoku.resume,
+            stop_surge=self.surge.stop,
+            start_surge=self.surge.resume
+        )
+
+    def _get_strategy_status(self) -> dict:
+        """전략별 상태 조회"""
+        return {
+            'ichimoku_running': self.ichimoku.running,
+            'surge_running': self.surge.running,
+            'surge_daily_pnl': self.surge.daily_pnl,
+            'surge_daily_limit': self.surge.daily_loss_limit,
+            'surge_positions': len(self.surge.positions),
+            'surge_max_positions': self.surge.max_positions,
+            'ichimoku_positions': len(self.ichimoku.positions),
+        }
+
     def _get_balance(self) -> dict:
         """잔고 조회 (공유 client)"""
         return self.ichimoku._get_balance_full()
