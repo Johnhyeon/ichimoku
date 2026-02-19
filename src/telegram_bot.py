@@ -341,6 +341,16 @@ class TelegramBot:
 
     # ==================== 대시보드 생성 ====================
 
+    def _format_position_line(self, p: dict) -> str:
+        """포지션 한 줄 포맷"""
+        emoji = "📈" if p['side'] == 'long' else "📉"
+        short_sym = p['symbol'].split('/')[0]
+        pnl_pct = float(p.get('pnl_pct', 0))
+        pnl_sign = "+" if pnl_pct >= 0 else ""
+        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+        leverage = int(p.get('leverage', 20))
+        return f"\n{emoji} <b>{short_sym}</b> {p['side'].upper()} {pnl_emoji} <code>{pnl_sign}{pnl_pct:.1f}%</code> (x{leverage})"
+
     def _build_dashboard_text(self) -> str:
         """메인 대시보드 텍스트 생성"""
         now = datetime.utcnow().strftime('%H:%M:%S')
@@ -373,24 +383,37 @@ class TelegramBot:
             try:
                 positions = self.get_positions_callback()
                 if positions:
-                    positions_text = "\n\n📋 <b>포지션</b>"
-                    for p in positions:
-                        emoji = "📈" if p['side'] == 'long' else "📉"
-                        short_sym = p['symbol'].split('/')[0]
-                        pnl_usd = float(p.get('pnl', 0))
-                        pnl_pct = float(p.get('pnl_pct', 0))  # 레버리지 적용
-                        pnl_sign = "+" if pnl_pct >= 0 else ""
-                        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
-                        leverage = int(p.get('leverage', 20))
-                        positions_text += f"\n{emoji} <b>{short_sym}</b> {p['side'].upper()}"
-                        positions_text += f" {pnl_emoji} <code>{pnl_sign}{pnl_pct:.1f}%</code> (x{leverage})"
+                    # 전략별 그룹화
+                    ichimoku_pos = [p for p in positions if p.get('strategy') == 'ichimoku']
+                    surge_pos = [p for p in positions if p.get('strategy') == 'surge']
+                    other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge')]
+
+                    has_groups = bool(ichimoku_pos) or bool(surge_pos)
+
+                    if has_groups:
+                        positions_text = "\n\n📋 <b>포지션</b>"
+                        if ichimoku_pos:
+                            positions_text += "\n\n⛩️ <b>이치모쿠</b>"
+                            for p in ichimoku_pos:
+                                positions_text += self._format_position_line(p)
+                        if surge_pos:
+                            positions_text += "\n\n🚀 <b>급등주</b>"
+                            for p in surge_pos:
+                                positions_text += self._format_position_line(p)
+                        if other_pos:
+                            for p in other_pos:
+                                positions_text += self._format_position_line(p)
+                    else:
+                        positions_text = "\n\n📋 <b>포지션</b>"
+                        for p in positions:
+                            positions_text += self._format_position_line(p)
                 else:
                     positions_text = "\n\n📋 <b>포지션</b>\n없음"
             except:
                 positions_text = "\n\n📋 포지션: 조회 실패"
 
         text = f"""
-🤖 <b>Ichimoku Trading Bot</b>
+🤖 <b>Trading Bot</b>
 
 {status_emoji} 상태: <b>{status_text}</b>
 🕐 갱신: {now} UTC
@@ -650,65 +673,86 @@ class TelegramBot:
             positions = self.get_positions_callback()
             if positions:
                 text = "📋 <b>포지션 상세</b>\n"
-                for p in positions:
-                    emoji = "📈" if p['side'] == 'long' else "📉"
-                    short_sym = p['symbol'].split('/')[0]
-                    side = p.get('side', 'long')
 
-                    pnl_usd = float(p.get('pnl', 0))
-                    pnl_pct = float(p.get('pnl_pct', 0))  # 레버리지 적용
-                    leverage = int(p.get('leverage', 20))
-                    pnl_sign = "+" if pnl_pct >= 0 else ""
-                    pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+                # 전략별 그룹화
+                ichimoku_pos = [p for p in positions if p.get('strategy') == 'ichimoku']
+                surge_pos = [p for p in positions if p.get('strategy') == 'surge']
+                other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge')]
+                has_groups = bool(ichimoku_pos) or bool(surge_pos)
 
-                    entry = float(p.get('entry_price', 0))
-                    current = float(p.get('current_price', 0))
-                    size = float(p.get('size', 0))
-                    sl = float(p.get('stop_loss', 0))
-                    tp = float(p.get('take_profit', 0))
+                ordered_positions = []
+                if has_groups:
+                    if ichimoku_pos:
+                        ordered_positions.append(("⛩️ <b>이치모쿠</b>", ichimoku_pos))
+                    if surge_pos:
+                        ordered_positions.append(("🚀 <b>급등주</b>", surge_pos))
+                    if other_pos:
+                        ordered_positions.append(("📋 <b>기타</b>", other_pos))
+                else:
+                    ordered_positions.append((None, positions))
 
-                    # 실제 가격 변동률 (레버리지 미적용)
-                    if entry > 0 and current > 0:
-                        if side == 'long':
-                            price_change = (current - entry) / entry * 100
+                for group_label, group_positions in ordered_positions:
+                    if group_label:
+                        text += f"\n{group_label}\n"
+                    for p in group_positions:
+                        emoji = "📈" if p['side'] == 'long' else "📉"
+                        short_sym = p['symbol'].split('/')[0]
+                        side = p.get('side', 'long')
+
+                        pnl_usd = float(p.get('pnl', 0))
+                        pnl_pct = float(p.get('pnl_pct', 0))  # 레버리지 적용
+                        leverage = int(p.get('leverage', 20))
+                        pnl_sign = "+" if pnl_pct >= 0 else ""
+                        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+
+                        entry = float(p.get('entry_price', 0))
+                        current = float(p.get('current_price', 0))
+                        size = float(p.get('size', 0))
+                        sl = float(p.get('stop_loss', 0))
+                        tp = float(p.get('take_profit', 0))
+
+                        # 실제 가격 변동률 (레버리지 미적용)
+                        if entry > 0 and current > 0:
+                            if side == 'long':
+                                price_change = (current - entry) / entry * 100
+                            else:
+                                price_change = (entry - current) / entry * 100
                         else:
-                            price_change = (entry - current) / entry * 100
-                    else:
-                        price_change = pnl_pct / leverage if leverage > 0 else 0
+                            price_change = pnl_pct / leverage if leverage > 0 else 0
 
-                    price_sign = "+" if price_change >= 0 else ""
+                        price_sign = "+" if price_change >= 0 else ""
 
-                    # 손절/익절까지 거리 (현재가 기준, 레버리지 적용)
-                    if current > 0 and sl > 0:
-                        if side == 'long':
-                            sl_dist = (current - sl) / current * 100 * leverage
+                        # 손절/익절까지 거리 (현재가 기준, 레버리지 적용)
+                        if current > 0 and sl > 0:
+                            if side == 'long':
+                                sl_dist = (current - sl) / current * 100 * leverage
+                            else:
+                                sl_dist = (sl - current) / current * 100 * leverage
                         else:
-                            sl_dist = (sl - current) / current * 100 * leverage
-                    else:
-                        sl_dist = 0
+                            sl_dist = 0
 
-                    if current > 0 and tp > 0:
-                        if side == 'long':
-                            tp_dist = (tp - current) / current * 100 * leverage
+                        if current > 0 and tp > 0:
+                            if side == 'long':
+                                tp_dist = (tp - current) / current * 100 * leverage
+                            else:
+                                tp_dist = (current - tp) / current * 100 * leverage
                         else:
-                            tp_dist = (current - tp) / current * 100 * leverage
-                    else:
-                        tp_dist = 0
+                            tp_dist = 0
 
-                    text += f"\n{emoji} <b>{short_sym}</b> {p['side'].upper()} (x{leverage})"
-                    text += f"\n┌ 진입: <code>${entry:,.2f}</code>"
-                    if current > 0:
-                        text += f" → 현재: <code>${current:,.2f}</code>"
-                    text += f"\n├ 가격변동: <code>{price_sign}{price_change:.2f}%</code>"
-                    text += f"\n├ {pnl_emoji} 수익률: <code>{pnl_sign}{pnl_pct:.1f}%</code> ({pnl_sign}${pnl_usd:.2f})"
-                    text += f"\n├ 수량: <code>{size:.4f}</code>"
-                    if sl > 0:
-                        sl_emoji = "🟡" if sl_dist > 0 else "🔴"
-                        text += f"\n├ {sl_emoji} 손절: <code>${sl:,.2f}</code> ({sl_dist:+.1f}%)"
-                    if tp > 0:
-                        tp_emoji = "🟡" if tp_dist > 0 else "🟢"
-                        text += f"\n└ {tp_emoji} 익절: <code>${tp:,.2f}</code> ({tp_dist:+.1f}%)"
-                    text += "\n"
+                        text += f"\n{emoji} <b>{short_sym}</b> {p['side'].upper()} (x{leverage})"
+                        text += f"\n┌ 진입: <code>${entry:,.2f}</code>"
+                        if current > 0:
+                            text += f" → 현재: <code>${current:,.2f}</code>"
+                        text += f"\n├ 가격변동: <code>{price_sign}{price_change:.2f}%</code>"
+                        text += f"\n├ {pnl_emoji} 수익률: <code>{pnl_sign}{pnl_pct:.1f}%</code> ({pnl_sign}${pnl_usd:.2f})"
+                        text += f"\n├ 수량: <code>{size:.4f}</code>"
+                        if sl > 0:
+                            sl_emoji = "🟡" if sl_dist > 0 else "🔴"
+                            text += f"\n├ {sl_emoji} 손절: <code>${sl:,.2f}</code> ({sl_dist:+.1f}%)"
+                        if tp > 0:
+                            tp_emoji = "🟡" if tp_dist > 0 else "🟢"
+                            text += f"\n└ {tp_emoji} 익절: <code>${tp:,.2f}</code> ({tp_dist:+.1f}%)"
+                        text += "\n"
             else:
                 text = "📋 <b>포지션</b>\n\n현재 보유중인 포지션이 없습니다"
 

@@ -30,18 +30,19 @@ logger = logging.getLogger(__name__)
 class IchimokuTrader:
     """일목균형표 자동매매 트레이더"""
 
-    def __init__(self, paper: bool = False, testnet: bool = False):
+    def __init__(self, paper: bool = False, testnet: bool = False,
+                 client=None, notifier=None, telegram_bot=None):
         self.paper = paper
         self.testnet = testnet
         self.running = False
 
-        # 바이빗 클라이언트
-        self.client = BybitClient(testnet=testnet)
+        # 바이빗 클라이언트 (외부 주입 또는 자체 생성)
+        self.client = client or BybitClient(testnet=testnet)
         self.data_fetcher = DataFetcher(self.client)
 
-        # 텔레그램
-        self.notifier = TelegramNotifier()
-        self.telegram_bot = TelegramBot(self.notifier)
+        # 텔레그램 (외부 주입 또는 자체 생성)
+        self.notifier = notifier or TelegramNotifier()
+        self.telegram_bot = telegram_bot or TelegramBot(self.notifier)
         self.telegram_bot.set_callbacks(
             get_balance=self._get_balance_full,
             get_positions=self._get_positions_list,
@@ -505,6 +506,7 @@ class IchimokuTrader:
             "trail_stop": stop_loss,
             "trailing": False,
             "size": qty,
+            "strategy": "ichimoku",
         }
 
         # 텔레그램 알림

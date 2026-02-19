@@ -54,7 +54,10 @@ class SurgeTrader:
         testnet: bool = False,
         initial_balance: float = 1000.0,
         daily_loss_limit_pct: float = 20.0,
-        max_positions: int = 3
+        max_positions: int = 3,
+        client=None,
+        notifier=None,
+        telegram_bot=None
     ):
         """
         Args:
@@ -63,6 +66,9 @@ class SurgeTrader:
             initial_balance: 초기 잔고 (실제 거래 시 참고용)
             daily_loss_limit_pct: 일일 손실 한도 % (초기 자금 대비)
             max_positions: 최대 동시 포지션 수
+            client: 외부 BybitClient 주입 (통합 실행 시)
+            notifier: 외부 TelegramNotifier 주입 (통합 실행 시)
+            telegram_bot: 외부 TelegramBot 주입 (통합 실행 시)
         """
         self.paper = paper
         self.testnet = testnet
@@ -78,17 +84,17 @@ class SurgeTrader:
         self.daily_pnl = 0.0
         self.last_reset_date = datetime.utcnow().date()
 
-        # 바이빗 클라이언트
-        self.client = BybitClient(testnet=testnet)
+        # 바이빗 클라이언트 (외부 주입 또는 자체 생성)
+        self.client = client or BybitClient(testnet=testnet)
         self.data_fetcher = DataFetcher(self.client)
 
         # Early Surge Detector
         self.detector = EarlySurgeDetector(self.data_fetcher, EARLY_SURGE_PARAMS)
         self.params = EARLY_SURGE_PARAMS
 
-        # 텔레그램
-        self.notifier = TelegramNotifier()
-        self.telegram_bot = TelegramBot(self.notifier)
+        # 텔레그램 (외부 주입 또는 자체 생성)
+        self.notifier = notifier or TelegramNotifier()
+        self.telegram_bot = telegram_bot or TelegramBot(self.notifier)
         self.telegram_bot.set_callbacks(
             get_balance=self._get_balance_full,
             get_positions=self._get_positions_list,
@@ -499,6 +505,7 @@ class SurgeTrader:
             "trail_stop": stop_loss,
             "trailing": False,
             "size": qty,
+            "strategy": "surge",
         }
 
         # 텔레그램 알림

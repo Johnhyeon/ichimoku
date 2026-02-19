@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""
+통합 봇 - 이치모쿠 + 급등주 전략 동시 실행
+
+하나의 프로세스에서 두 전략을 함께 실행합니다:
+  - 이치모쿠: 4시간봉 기반 SHORT 전략 (레버리지 20x)
+  - 급등주: 5분봉 기반 LONG 전략 (레버리지 5x)
+
+텔레그램 봇 1개로 통합 관리하므로 409 Conflict 없이 동작합니다.
+
+실행 예시:
+    python run_unified.py --paper      # 페이퍼 모드
+    python run_unified.py              # 실거래 (메인넷)
+    python run_unified.py --testnet    # 테스트넷
+"""
+
+import argparse
+import asyncio
+import logging
+import sys
+from datetime import datetime
+from typing import Dict
+
+from src.bybit_client import BybitClient
+from src.telegram_bot import TelegramNotifier, TelegramBot
+from src.trader import IchimokuTrader
+from src.surge_trader import SurgeTrader
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("unified_bot.log", encoding="utf-8")
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class UnifiedTrader:
+    """이치모쿠 + 급등주 통합 트레이더"""
+
+    def __init__(
+        self,
+        paper: bool = False,
+        testnet: bool = False,
+        initial_balance: float = 1000.0,
+        daily_loss_limit_pct: float = 20.0,
+        surge_max_positions: int = 3
+    ):
+        self.paper = paper
+        self.testnet = testnet
+
+        # 공유 리소스
+        self.client = BybitClient(testnet=testnet)
+        self.notifier = TelegramNotifier()
+        self.telegram_bot = TelegramBot(self.notifier)
+
+        # 이치모쿠 전략 (공유 리소스 주입)
+        self.ichimoku = IchimokuTrader(
+            paper=paper,
+            testnet=testnet,
+            client=self.client,
+            notifier=self.notifier,
+            telegram_bot=self.telegram_bot
+        )
+
+        # 급등주 전략 (공유 리소스 주입)
+        self.surge = SurgeTrader(
+            paper=paper,
+            testnet=testnet,
+            initial_balance=initial_balance,
+            daily_loss_limit_pct=daily_loss_limit_pct,
+            max_positions=surge_max_positions,
+            client=self.client,
+            notifier=self.notifier,
+            telegram_bot=self.telegram_bot
+        )
+
+        # 텔레그램 콜백을 통합 메서드로 재등록
+        self.telegram_bot.set_callbacks(
+            get_balance=self._get_balance,
+            get_positions=self._get_all_positions,
+            get_trade_history=self._get_all_trade_history,
+            stop_bot=self._stop_all,
+            start_bot=self._resume_all,
+            sync_positions=self._sync_all
+        )
+
+        # 이치모쿠 분석 콜백은 그대로 유지
+        self.telegram_bot.set_analysis_callbacks(
+            get_market_report=self.ichimoku._get_market_report,
+            get_no_entry_report=self.ichimoku._get_no_entry_report,
+            get_watch_report=self.ichimoku._get_watch_report,
+            get_chart=self.ichimoku._get_chart,
+            get_overview_chart=self.ichimoku._get_overview_chart,
+            chat_response=self.ichimoku._chat_response
+        )
+
+        # 거래정보 콜백도 이치모쿠에서 유지 (공유 client 사용)
+        self.telegram_bot.set_trading_callbacks(
+            get_funding_rates=self.ichimoku._get_funding_rates,
+            get_position_sl_tp=self.ichimoku._get_position_sl_tp,
+            set_position_sl_tp=self.ichimoku._set_position_sl_tp,
+            get_account_stats=self.ichimoku._get_account_stats,
+            get_trade_history_exchange=self.ichimoku._get_trade_history_from_exchange,
+            get_transaction_log=self.ichimoku._get_transaction_log
+        )
+
+    def _get_balance(self) -> dict:
+        """잔고 조회 (공유 client)"""
+        return self.ichimoku._get_balance_full()
+
+    def _get_all_positions(self) -> list:
+        """두 전략의 포지션 합산"""
+        positions = []
+        for p in self.ichimoku._get_positions_list():
+            p['strategy'] = 'ichimoku'
+            positions.append(p)
+        for p in self.surge._get_positions_list():
+            p['strategy'] = 'surge'
+            positions.append(p)
+        return positions
+
+    def _get_all_trade_history(self) -> list:
+        """두 전략의 거래 이력 합산"""
+        history = []
+        for h in self.ichimoku._get_trade_history():
+            h_copy = h.copy()
+            h_copy['strategy'] = 'ichimoku'
+            history.append(h_copy)
+        for h in self.surge._get_trade_history():
+            h_copy = h.copy()
+            h_copy['strategy'] = 'surge'
+            history.append(h_copy)
+        # 시간순 정렬
+        history.sort(key=lambda x: x.get('closed_at') or datetime.min, reverse=True)
+        return history
+
+    def _stop_all(self):
+        """두 전략 모두 중지"""
+        self.ichimoku.stop()
+        self.surge.stop()
+
+    def _resume_all(self):
+        """두 전략 모두 재개"""
+        self.ichimoku.resume()
+        self.surge.resume()
+
+    def _sync_all(self) -> dict:
+        """두 전략 모두 포지션 동기화"""
+        result1 = self.ichimoku._check_manual_closes() or {"synced": 0, "positions": 0}
+        result2 = self.surge._check_manual_closes() or {"synced": 0, "positions": 0}
+        return {
+            "synced": result1.get("synced", 0) + result2.get("synced", 0),
+            "positions": result1.get("positions", 0) + result2.get("positions", 0)
+        }
+
+    async def _ichimoku_loop(self):
+        """이치모쿠 루프 (4시간봉 갱신 시마다)"""
+        while True:
+            if self.ichimoku.running:
+                try:
+                    self.ichimoku.run_once()
+
+                    # 시황 리포트 전송
+                    await self.ichimoku._send_periodic_report()
+
+                except Exception as e:
+                    logger.error(f"[이치모쿠] 루프 오류: {e}")
+                    self.notifier.send_sync(f"⚠️ 이치모쿠 오류: {e}")
+
+            # 다음 4시간봉 캔들까지 대기
+            next_candle = self.ichimoku.data_fetcher.get_next_candle_time("4h")
+            now = datetime.utcnow()
+            sleep_seconds = max(60, (next_candle - now).total_seconds())
+            logger.info(f"[이치모쿠] 다음 캔들까지 {sleep_seconds/60:.1f}분 대기")
+            await asyncio.sleep(sleep_seconds)
+
+    async def _surge_loop(self):
+        """급등주 루프 (5분마다)"""
+        while True:
+            if self.surge.running:
+                try:
+                    self.surge.run_once()
+                except Exception as e:
+                    logger.error(f"[급등주] 루프 오류: {e}")
+                    self.notifier.send_sync(f"⚠️ 급등주 오류: {e}")
+
+            logger.info("[급등주] 5분 대기...")
+            await asyncio.sleep(300)
+
+    async def run_async(self):
+        """두 전략을 하나의 asyncio 루프에서 실행"""
+        mode = "PAPER" if self.paper else "LIVE"
+        logger.info(f"통합 봇 시작 [{mode}]")
+
+        # 텔레그램 봇 시작 (1개만)
+        await self.telegram_bot.start_polling()
+
+        # 시작 알림
+        self.notifier.send_sync(
+            f"🚀 <b>통합 봇 시작</b> [{mode}]\n\n"
+            f"⛩️ 이치모쿠: 4시간봉 SHORT (20x)\n"
+            f"🚀 급등주: 5분봉 LONG (5x)"
+        )
+
+        self.ichimoku.running = True
+        self.surge.running = True
+
+        # 두 전략을 별도 asyncio Task로 실행
+        ichimoku_task = asyncio.create_task(self._ichimoku_loop())
+        surge_task = asyncio.create_task(self._surge_loop())
+
+        try:
+            await asyncio.gather(ichimoku_task, surge_task)
+        except asyncio.CancelledError:
+            logger.info("통합 봇 종료")
+        finally:
+            await self.telegram_bot.stop_polling()
+
+    def run(self):
+        """동기 실행"""
+        asyncio.run(self.run_async())
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="통합 봇 - 이치모쿠 + 급등주 전략 동시 실행"
+    )
+    parser.add_argument(
+        "--paper", action="store_true",
+        help="페이퍼 모드 (실제 주문 안 보냄)"
+    )
+    parser.add_argument(
+        "--testnet", action="store_true",
+        help="Bybit 테스트넷 사용"
+    )
+    parser.add_argument(
+        "--initial", type=float, default=1000.0,
+        help="급등주 초기 운용 자금 (기본: 1000 USDT)"
+    )
+    parser.add_argument(
+        "--loss-limit", type=float, default=20.0,
+        help="급등주 일일 손실 한도 %% (기본: 20%%)"
+    )
+    parser.add_argument(
+        "--surge-max-positions", type=int, default=3,
+        help="급등주 최대 동시 포지션 수 (기본: 3개)"
+    )
+    args = parser.parse_args()
+
+    logger.info("=" * 60)
+    logger.info("통합 봇 - 이치모쿠 + 급등주 전략")
+    logger.info("=" * 60)
+
+    mode = "PAPER" if args.paper else "LIVE"
+    net = "TESTNET" if args.testnet else "MAINNET"
+    logger.info(f"모드: {mode}, 네트워크: {net}")
+
+    try:
+        trader = UnifiedTrader(
+            paper=args.paper,
+            testnet=args.testnet,
+            initial_balance=args.initial,
+            daily_loss_limit_pct=args.loss_limit,
+            surge_max_positions=args.surge_max_positions
+        )
+        trader.run()
+
+    except KeyboardInterrupt:
+        logger.info("사용자 인터럽트로 종료")
+    except Exception as e:
+        logger.error(f"치명적 오류: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
