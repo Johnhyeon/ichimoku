@@ -114,12 +114,23 @@ class SurgeTrader:
         # 상태 저장 파일 경로
         self.state_file = "data/surge_bot_state.json"
 
+        # 실제 잔고로 초기 자금 설정
+        if not self.paper:
+            try:
+                balance = self.client.get_balance()
+                actual_balance = float(balance.get("total", 0))
+                if actual_balance > 0:
+                    self.initial_balance = actual_balance
+                    self.daily_loss_limit = actual_balance * (daily_loss_limit_pct / 100)
+            except Exception as e:
+                logger.warning(f"실제 잔고 조회 실패, 기본값 사용: {e}")
+
         # 시작 로그
         mode = "PAPER" if self.paper else "LIVE"
         net = "TESTNET" if self.testnet else "MAINNET"
         logger.info(f"SurgeTrader 시작 - 모드: {mode}, 네트워크: {net}")
-        logger.info(f"초기 자금: ${self.initial_balance:,.0f}")
-        logger.info(f"일일 손실 한도: ${self.daily_loss_limit:,.0f} ({self.daily_loss_limit_pct}%)")
+        logger.info(f"계좌 잔고: ${self.initial_balance:,.2f}")
+        logger.info(f"일일 손실 한도: ${self.daily_loss_limit:,.2f} ({self.daily_loss_limit_pct}%)")
         logger.info(f"최대 포지션: {self.max_positions}개")
         logger.info(f"레버리지: {self.params['leverage']}x, 포지션 크기: {self.params['position_pct']*100}%")
 
