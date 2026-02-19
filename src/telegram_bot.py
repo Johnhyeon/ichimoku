@@ -1184,6 +1184,16 @@ class TelegramBot:
             logger.warning("텔레그램 토큰이 없어 봇을 시작하지 않습니다")
             return
 
+        # 기존 폴링 세션 해제 (다른 인스턴스 충돌 방지)
+        import httpx
+        try:
+            async with httpx.AsyncClient() as client:
+                url = f"https://api.telegram.org/bot{self.notifier.token}/deleteWebhook?drop_pending_updates=true"
+                await client.post(url)
+                logger.info("기존 텔레그램 웹훅/폴링 세션 해제 완료")
+        except Exception as e:
+            logger.warning(f"텔레그램 세션 해제 실패 (무시): {e}")
+
         self.app = Application.builder().token(self.notifier.token).build()
 
         # 명령어 핸들러
@@ -1204,7 +1214,7 @@ class TelegramBot:
 
         await self.app.initialize()
         await self.app.start()
-        await self.app.updater.start_polling()
+        await self.app.updater.start_polling(drop_pending_updates=True)
 
     async def stop_polling(self):
         """봇 폴링 중지"""

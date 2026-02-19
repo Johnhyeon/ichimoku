@@ -205,7 +205,7 @@ class SurgeTrader:
             return False
 
     def _sync_positions(self):
-        """거래소에서 기존 포지션 동기화"""
+        """거래소에서 기존 포지션 동기화 (이 봇이 관리하는 포지션만)"""
         # 저장된 상태 먼저 불러오기
         saved_state_loaded = self._load_state()
         saved_positions = self.positions.copy()
@@ -225,11 +225,9 @@ class SurgeTrader:
                     logger.info(f"거래소에 없는 포지션 제거: {symbol}")
                     self.positions.pop(symbol, None)
 
-            # 거래소 포지션과 동기화
+            # 저장된 포지션만 거래소 데이터로 업데이트 (다른 전략 포지션은 무시)
             for pos in exchange_positions:
                 symbol = pos["symbol"]
-
-                # Early Surge 전략은 알트코인 전체 대상
                 entry_price = pos["entry_price"]
                 side = pos["side"]
                 size = pos["size"]
@@ -244,33 +242,20 @@ class SurgeTrader:
                         self.positions[symbol]["size"] = size
                         self.positions[symbol]["pnl"] = pnl
                         logger.info(f"저장된 포지션 복원: {symbol}")
-                        continue
-
-                # 저장된 정보 없으면 기본값 설정
-                stop_loss = entry_price * (1 - self.params["sl_pct"] / 100)
-                take_profit = entry_price * (1 + self.params["tp_pct"] / 100)
-
-                self.positions[symbol] = {
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_price": entry_price,
-                    "entry_time": None,
-                    "stop_loss": stop_loss,
-                    "take_profit": take_profit,
-                    "highest": entry_price,
-                    "lowest": entry_price,
-                    "trail_stop": stop_loss,
-                    "trailing": False,
-                    "size": size,
-                    "pnl": pnl,
-                }
-                logger.info(f"새 포지션 동기화: {symbol}")
+                    else:
+                        # 진입가가 다르면 포지션이 변경됨 - 제거
+                        logger.info(f"포지션 변경 감지, 관리 대상에서 제거: {symbol}")
+                        self.positions.pop(symbol, None)
+                else:
+                    # 이 봇이 열지 않은 포지션은 무시
+                    logger.info(f"다른 전략 포지션 무시: {symbol} (side={side}, entry=${entry_price:.4f})")
 
             if self.positions:
-                logger.info(f"포지션 {len(self.positions)}개 동기화 완료")
+                logger.info(f"이 봇 관리 포지션 {len(self.positions)}개 동기화 완료")
             else:
-                logger.info("동기화된 포지션 없음")
+                logger.info("관리 중인 포지션 없음")
 
+            logger.info(f"거래소 전체 포지션: {len(exchange_positions)}개, 이 봇 관리: {len(self.positions)}개")
             self._save_state()
 
         except Exception as e:
