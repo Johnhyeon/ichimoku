@@ -1128,40 +1128,76 @@ class TelegramBot:
 
                 text += "━━━━━━━━━━━━━━━━\n"
 
-                for h in history[:10]:  # 최근 10건만
-                    symbol = h.get('symbol', '')
-                    short_sym = symbol.split('/')[0] if '/' in symbol else symbol
-                    pnl_pct = float(h.get('pnl_pct', 0))
-                    pnl_usd = float(h.get('pnl_usd', 0))
-                    reason = h.get('reason', '')
-                    closed_at = h.get('closed_at')
-                    leverage = h.get('leverage', 20)
-                    strategy = h.get('strategy', '')
+                # 전략별로 그룹화하여 표시
+                strat_order = [
+                    ('ichimoku', '⛩️ <b>이치모쿠</b>'),
+                    ('mirror_short', '📉 <b>미러숏</b>'),
+                    ('surge', '📉 <b>미러숏</b>'),
+                ]
+                shown_labels = set()
 
-                    emoji = "✅" if pnl_usd >= 0 else "❌"
-                    pnl_sign = "+" if pnl_pct >= 0 else ""
-                    side = h.get('side', 'long')
-                    side_emoji = "📈" if side == 'long' else "📉"
-                    strat_tag = strat_map.get(strategy, '')
+                for strat_key, strat_label in strat_order:
+                    group = [h for h in history if h.get('strategy', '') == strat_key]
+                    if not group:
+                        continue
 
-                    time_str = ""
-                    if closed_at:
-                        if hasattr(closed_at, 'strftime'):
-                            time_str = closed_at.strftime("%m/%d %H:%M")
-                        else:
-                            time_str = str(closed_at)[:16]
+                    # mirror_short / surge 중복 라벨 방지
+                    label_key = strat_label
+                    if label_key in shown_labels:
+                        continue
+                    shown_labels.add(label_key)
 
-                    entry = float(h.get('entry_price', 0))
-                    exit_p = float(h.get('exit_price', 0))
+                    # surge도 합산
+                    if strat_key == 'mirror_short':
+                        group += [h for h in history if h.get('strategy', '') == 'surge']
+                        group.sort(key=lambda x: x.get('closed_at') or '', reverse=True)
 
-                    text += f"\n{emoji} {strat_tag}{side_emoji} <b>{short_sym}</b> {side.upper()}"
-                    if entry > 0 and exit_p > 0:
-                        text += f"\n   ${entry:,.0f} → ${exit_p:,.0f}"
-                    text += f"\n   {pnl_sign}{pnl_pct:.1f}% (<code>{pnl_sign}${pnl_usd:.2f}</code>)"
-                    if reason:
-                        text += f" | {reason}"
-                    if time_str:
-                        text += f"\n   <code>{time_str}</code>"
+                    text += f"\n{strat_label}\n"
+
+                    for h in group[:7]:
+                        symbol = h.get('symbol', '')
+                        short_sym = symbol.split('/')[0] if '/' in symbol else symbol
+                        pnl_pct = float(h.get('pnl_pct', 0))
+                        pnl_usd = float(h.get('pnl_usd', 0))
+                        reason = h.get('reason', '')
+                        closed_at = h.get('closed_at')
+                        side = h.get('side', 'long')
+                        side_emoji = "📈" if side == 'long' else "📉"
+
+                        emoji = "✅" if pnl_usd >= 0 else "❌"
+                        pnl_sign = "+" if pnl_pct >= 0 else ""
+
+                        time_str = ""
+                        if closed_at:
+                            if hasattr(closed_at, 'strftime'):
+                                time_str = closed_at.strftime("%m/%d %H:%M")
+                            else:
+                                time_str = str(closed_at)[:16]
+
+                        entry = float(h.get('entry_price', 0))
+                        exit_p = float(h.get('exit_price', 0))
+
+                        text += f"\n{emoji} {side_emoji} <b>{short_sym}</b> {side.upper()}"
+                        if entry > 0 and exit_p > 0:
+                            text += f"\n   ${entry:,.0f} → ${exit_p:,.0f}"
+                        text += f"\n   {pnl_sign}{pnl_pct:.1f}% (<code>{pnl_sign}${pnl_usd:.2f}</code>)"
+                        if reason:
+                            text += f" | {reason}"
+                        if time_str:
+                            text += f"\n   <code>{time_str}</code>"
+
+                # 전략 태그 없는 거래
+                other = [h for h in history if h.get('strategy', '') not in ('ichimoku', 'mirror_short', 'surge')]
+                if other:
+                    text += "\n\n📋 <b>기타</b>\n"
+                    for h in other[:5]:
+                        symbol = h.get('symbol', '')
+                        short_sym = symbol.split('/')[0] if '/' in symbol else symbol
+                        pnl_usd = float(h.get('pnl_usd', 0))
+                        pnl_pct = float(h.get('pnl_pct', 0))
+                        pnl_sign = "+" if pnl_pct >= 0 else ""
+                        emoji = "✅" if pnl_usd >= 0 else "❌"
+                        text += f"\n{emoji} <b>{short_sym}</b> {pnl_sign}{pnl_pct:.1f}% (<code>{pnl_sign}${pnl_usd:.2f}</code>)"
             else:
                 text = "📜 <b>거래 이력</b>\n\n최근 7일간 거래 이력이 없습니다"
 
