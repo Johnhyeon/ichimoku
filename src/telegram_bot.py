@@ -1474,50 +1474,118 @@ class TelegramBot:
 """
         await self._safe_edit_message(query, text.strip(), self._get_trading_keyboard())
 
+    def _calc_strategy_stats(self, trades: list) -> dict:
+        """거래 목록에서 통계 계산"""
+        if not trades:
+            return {'total_pnl': 0, 'total_trades': 0, 'win_count': 0,
+                    'loss_count': 0, 'win_rate': 0, 'avg_win': 0,
+                    'avg_loss': 0, 'max_win': 0, 'max_loss': 0, 'profit_factor': 0}
+
+        total_pnl = sum(t.get('pnl_usd', 0) for t in trades)
+        wins = [t for t in trades if t.get('pnl_usd', 0) > 0]
+        losses = [t for t in trades if t.get('pnl_usd', 0) < 0]
+        win_count = len(wins)
+        loss_count = len(losses)
+        total_trades = len(trades)
+        win_rate = (win_count / total_trades * 100) if total_trades else 0
+
+        win_amts = [t.get('pnl_usd', 0) for t in wins]
+        loss_amts = [t.get('pnl_usd', 0) for t in losses]
+
+        avg_win = sum(win_amts) / len(win_amts) if win_amts else 0
+        avg_loss = sum(loss_amts) / len(loss_amts) if loss_amts else 0
+        max_win = max(win_amts) if win_amts else 0
+        max_loss = min(loss_amts) if loss_amts else 0
+
+        total_loss_abs = abs(sum(loss_amts)) if loss_amts else 0
+        profit_factor = sum(win_amts) / total_loss_abs if total_loss_abs > 0 else float('inf')
+
+        return {
+            'total_pnl': total_pnl, 'total_trades': total_trades,
+            'win_count': win_count, 'loss_count': loss_count,
+            'win_rate': win_rate, 'avg_win': avg_win, 'avg_loss': avg_loss,
+            'max_win': max_win, 'max_loss': max_loss, 'profit_factor': profit_factor,
+        }
+
+    def _format_stats_block(self, stats: dict, label: str = "") -> str:
+        """통계 블록 포맷"""
+        total_pnl = stats['total_pnl']
+        pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+        pnl_sign = "+" if total_pnl >= 0 else ""
+
+        text = ""
+        if label:
+            text += f"\n{label}\n"
+
+        text += f"{pnl_emoji} 손익: <code>{pnl_sign}${total_pnl:,.2f}</code>\n"
+        text += f"📋 {stats['total_trades']}건 ({stats['win_count']}승 {stats['loss_count']}패)"
+        text += f" 승률 <code>{stats['win_rate']:.0f}%</code>\n"
+
+        if stats['total_trades'] > 0:
+            text += f"💰 평균수익: <code>+${stats['avg_win']:,.2f}</code>"
+            text += f" | 평균손실: <code>${stats['avg_loss']:,.2f}</code>\n"
+            text += f"🏆 최대수익: <code>+${stats['max_win']:,.2f}</code>"
+            text += f" | 최대손실: <code>${stats['max_loss']:,.2f}</code>\n"
+
+            pf = stats['profit_factor']
+            if pf != float('inf'):
+                text += f"📐 PF: <code>{pf:.2f}</code>\n"
+
+        return text
+
     async def _show_account_stats(self, query, days: int):
-        """계정 통계 표시"""
+        """계정 통계 표시 (전략별)"""
         await self._safe_edit_message(query, f"📊 {days}일 통계 조회 중...")
 
-        if not self.get_account_stats_callback:
-            await self._safe_edit_message(query, "❌ 통계 조회 불가", self._get_trading_keyboard())
-            return
+        # 봇 메모리 거래이력에서 전략별 통계 계산
+        history = []
+        if self.get_trade_history_exchange_callback:
+            try:
+                history = self.get_trade_history_exchange_callback(days)
+            except:
+                pass
+        if not history and self.get_trade_history_callback:
+            try:
+                history = self.get_trade_history_callback()
+            except:
+                pass
+
+        # 바이빗 API 통계도 조회 (전체 기준)
+        api_stats = None
+        if self.get_account_stats_callback:
+            try:
+                api_stats = self.get_account_stats_callback(days)
+            except:
+                pass
 
         try:
-            stats = self.get_account_stats_callback(days)
-
-            total_pnl = stats.get('total_pnl', 0)
-            total_trades = stats.get('total_trades', 0)
-            win_count = stats.get('win_count', 0)
-            loss_count = stats.get('loss_count', 0)
-            win_rate = stats.get('win_rate', 0)
-            avg_win = stats.get('avg_win', 0)
-            avg_loss = stats.get('avg_loss', 0)
-            max_win = stats.get('max_win', 0)
-            max_loss = stats.get('max_loss', 0)
-            profit_factor = stats.get('profit_factor', 0)
-
-            pnl_emoji = "📈" if total_pnl >= 0 else "📉"
-            pnl_sign = "+" if total_pnl >= 0 else ""
-
             text = f"📊 <b>최근 {days}일 거래 통계</b>\n"
-            text += "━━━━━━━━━━━━━━━━\n\n"
+            text += "━━━━━━━━━━━━━━━━\n"
 
-            text += f"{pnl_emoji} <b>총 손익</b>: <code>{pnl_sign}${total_pnl:,.2f}</code>\n\n"
+            if history:
+                # 전체 통계
+                all_stats = self._calc_strategy_stats(history)
+                text += self._format_stats_block(all_stats, "📋 <b>전체</b>")
 
-            text += f"📋 총 거래: <code>{total_trades}건</code>\n"
-            text += f"✅ 승리: <code>{win_count}건</code>\n"
-            text += f"❌ 패배: <code>{loss_count}건</code>\n"
-            text += f"🎯 승률: <code>{win_rate:.1f}%</code>\n\n"
+                # 전략별 분리
+                ich_trades = [h for h in history if h.get('strategy') == 'ichimoku']
+                surge_trades = [h for h in history if h.get('strategy') in ('mirror_short', 'surge')]
 
-            if total_trades > 0:
-                text += f"💰 평균 수익: <code>+${avg_win:,.2f}</code>\n"
-                text += f"💸 평균 손실: <code>${avg_loss:,.2f}</code>\n"
-                text += f"🏆 최대 수익: <code>+${max_win:,.2f}</code>\n"
-                text += f"😢 최대 손실: <code>${max_loss:,.2f}</code>\n\n"
+                if ich_trades:
+                    text += "━━━━━━━━━━━━━━━━\n"
+                    ich_stats = self._calc_strategy_stats(ich_trades)
+                    text += self._format_stats_block(ich_stats, "⛩️ <b>이치모쿠</b>")
 
-                if profit_factor != float('inf'):
-                    text += f"📐 Profit Factor: <code>{profit_factor:.2f}</code>\n"
-                    text += "<i>(1 이상이면 수익, 2 이상이면 우수)</i>"
+                if surge_trades:
+                    text += "━━━━━━━━━━━━━━━━\n"
+                    surge_stats = self._calc_strategy_stats(surge_trades)
+                    text += self._format_stats_block(surge_stats, "📉 <b>미러숏</b>")
+
+            elif api_stats:
+                # 봇 이력이 없으면 바이빗 API 통계만 표시
+                text += self._format_stats_block(api_stats, "📋 <b>전체 (바이빗)</b>")
+            else:
+                text += "\n거래 이력이 없습니다"
 
             await self._safe_edit_message(query, text.strip(), self._get_trading_keyboard())
 
