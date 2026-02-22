@@ -19,6 +19,8 @@ try:
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
+from datetime import timedelta
+
 from src.ichimoku import calculate_ichimoku
 
 logger = logging.getLogger(__name__)
@@ -259,6 +261,144 @@ class ChartGenerator:
 
         except Exception as e:
             logger.error(f"차트 생성 실패: {e}")
+            plt.close('all')
+            return None
+
+    def generate_balance_chart(self, history: list) -> Optional[bytes]:
+        """
+        잔고 추이 차트 생성
+
+        Args:
+            history: [{timestamp, equity, balance, unrealized_pnl}, ...]
+
+        Returns:
+            PNG 이미지 바이트
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            return None
+
+        if not history or len(history) < 2:
+            return None
+
+        try:
+            # 데이터 준비
+            timestamps = []
+            equities = []
+            unrealized_pnls = []
+
+            for h in history:
+                ts = h.get("timestamp", "")
+                try:
+                    dt = datetime.fromisoformat(ts)
+                except (ValueError, TypeError):
+                    continue
+                timestamps.append(dt)
+                equities.append(float(h.get("equity", 0)))
+                unrealized_pnls.append(float(h.get("unrealized_pnl", 0)))
+
+            if len(timestamps) < 2:
+                return None
+
+            # Figure 생성
+            fig, (ax1, ax2) = plt.subplots(
+                2, 1, figsize=(14, 8),
+                gridspec_kw={'height_ratios': [3, 1]},
+                facecolor='#1a1a2e'
+            )
+
+            ax1.set_facecolor('#16213e')
+            ax2.set_facecolor('#16213e')
+
+            # === 상단: Equity 라인 차트 ===
+            ax1.plot(timestamps, equities, color='#00d4ff', linewidth=2, label='Equity')
+
+            # 영역 그라데이션
+            ax1.fill_between(
+                timestamps, equities,
+                min(equities) * 0.998,
+                alpha=0.3,
+                color='#00d4ff'
+            )
+
+            # 시작/종료 값
+            start_equity = equities[0]
+            end_equity = equities[-1]
+            change_amt = end_equity - start_equity
+            change_pct = (change_amt / start_equity * 100) if start_equity != 0 else 0
+
+            change_color = '#00ff88' if change_amt >= 0 else '#ff4757'
+            change_sign = '+' if change_amt >= 0 else ''
+
+            # 시작점/끝점 마커
+            ax1.plot(timestamps[0], start_equity, 'o', color='#ffd93d', markersize=8, zorder=5)
+            ax1.plot(timestamps[-1], end_equity, 'o', color=change_color, markersize=8, zorder=5)
+
+            # 현재 평가자산 라벨
+            ax1.annotate(
+                f'${end_equity:,.2f}',
+                xy=(timestamps[-1], end_equity),
+                xytext=(15, 10),
+                textcoords='offset points',
+                color='white',
+                fontsize=11,
+                fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#333', alpha=0.9)
+            )
+
+            # 변화율/변화액 표시
+            ax1.set_title(
+                f'Balance Trend  |  {change_sign}{change_pct:.2f}% ({change_sign}${change_amt:,.2f})',
+                color=change_color,
+                fontsize=14,
+                fontweight='bold',
+                pad=15
+            )
+
+            ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+            ax1.grid(True, alpha=0.2, color='gray')
+            ax1.legend(loc='upper left', facecolor='#333', edgecolor='gray', labelcolor='white')
+
+            # === 하단: 미실현 손익 바 차트 ===
+            bar_colors = ['#00ff88' if pnl >= 0 else '#ff4757' for pnl in unrealized_pnls]
+
+            # 바 너비 계산 (데이터 간격 기반)
+            if len(timestamps) > 1:
+                avg_delta = (timestamps[-1] - timestamps[0]) / len(timestamps)
+                bar_width = avg_delta * 0.8
+            else:
+                bar_width = timedelta(minutes=4)
+
+            ax2.bar(timestamps, unrealized_pnls, color=bar_colors, alpha=0.8, width=bar_width)
+            ax2.axhline(y=0, color='gray', linewidth=0.5, alpha=0.5)
+
+            ax2.set_ylabel('Unrealized PnL', color='white', fontsize=10)
+            ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+            ax2.grid(True, alpha=0.2, color='gray')
+
+            # X축 날짜 포맷
+            for ax in [ax1, ax2]:
+                ax.tick_params(colors='white')
+                ax.spines['bottom'].set_color('gray')
+                ax.spines['top'].set_color('gray')
+                ax.spines['left'].set_color('gray')
+                ax.spines['right'].set_color('gray')
+
+            ax1.set_xticklabels([])
+
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
+            fig.autofmt_xdate(rotation=30, ha='right')
+
+            plt.tight_layout()
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150, facecolor='#1a1a2e', edgecolor='none')
+            buf.seek(0)
+            plt.close(fig)
+
+            return buf.getvalue()
+
+        except Exception as e:
+            logger.error(f"잔고 차트 생성 실패: {e}")
             plt.close('all')
             return None
 

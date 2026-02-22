@@ -44,13 +44,14 @@ EARLY_SURGE_PARAMS = {
     "max_entry_price_from_low": 15,  # 저점 대비 최대 진입가 %
 
     # === 리스크 관리 ===
-    "sl_pct": 5.0,                   # 손절 %
+    "sl_pct": 10.0,                  # 손절 % (러프하게)
     "tp_pct": 50.0,                  # 익절 % (급등 노림)
     "trail_start_pct": 25.0,         # 트레일링 시작 % (25%부터)
     "trail_pct": 8.0,                # 트레일링 스탑 % (8% 여유)
+    "breakeven_sl_pct": 3.0,         # entry 이상 오르면 SL을 entry+3%로 이동
 
     # === 레버리지 ===
-    "leverage": 5,
+    "leverage": 2,
     "position_pct": 0.03,            # 자산의 3% (고위험)
 }
 
