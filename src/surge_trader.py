@@ -1,30 +1,17 @@
 """
-Early Surge 전략 실시간 트레이더
+Mirror Short 전략 실시간 트레이더
 
-백테스트에서 검증된 초기 급등 감지 전략을 실시간으로 운영합니다.
+급등+과열 캔들 이후 숏 진입, 트레일링으로 청산하는 전략입니다.
+백테스트: 1,702건, 40% WR, $1K→$68K.
 
 주요 특징:
-  - 5분봉 기반 초기 급등 감지
-  - 거래량 폭발 + 가격 급등 필터링
+  - 5분봉 기반 급등+과열 감지 후 숏 진입
   - 트레일링 스톱으로 수익 보호
   - 일일 손실 한도 안전장치
   - 텔레그램 실시간 알림
 
-안전장치:
-  - 일일 최대 손실 한도 (초기 자금 대비 %)
-  - 최대 동시 포지션 수 제한
-  - 레버리지 제한 (기본 5x)
-  - 포지션 크기 제한 (자산의 3%)
-
 실행 예시:
-    # 페이퍼 모드 (시뮬레이션)
-    python live_surge.py --paper
-
-    # 실제 거래 (신중히!)
-    python live_surge.py
-
-    # 테스트넷
-    python live_surge.py --testnet
+    python run_unified.py --paper
 """
 
 import logging
@@ -38,15 +25,32 @@ import pandas as pd
 
 from src.bybit_client import BybitClient
 from src.data_fetcher import DataFetcher
-from src.early_surge_detector import EarlySurgeDetector, EARLY_SURGE_PARAMS
+from src.live_surge_mirror_short import MirrorShortParams, overheat_confirmed
 from src.telegram_bot import TelegramNotifier, TelegramBot
 from src.strategy import MAJOR_COINS
 
 logger = logging.getLogger(__name__)
 
+MIRROR_SHORT_PARAMS = {
+    'volume_spike_threshold': 10.0,
+    'price_change_threshold': 5.0,
+    'consolidation_lookback': 12,
+    'consolidation_range_pct': 5.0,
+    'max_entry_price_from_low': 15.0,
+    'volume_lookback': 20,
+    'overheat_cum_rise_pct': 8.0,
+    'overheat_upper_wick_pct': 40.0,
+    'overheat_volume_ratio': 5.0,
+    'sl_pct': 1.0,
+    'trail_start_pct': 3.0,
+    'trail_rebound_pct': 1.2,
+    'leverage': 5,
+    'position_pct': 0.05,
+}
+
 
 class SurgeTrader:
-    """Early Surge 전략 실시간 트레이더"""
+    """Mirror Short 전략 실시간 트레이더"""
 
     def __init__(
         self,
@@ -57,7 +61,8 @@ class SurgeTrader:
         max_positions: int = 3,
         client=None,
         notifier=None,
-        telegram_bot=None
+        telegram_bot=None,
+        get_excluded_symbols=None
     ):
         """
         Args:
@@ -69,10 +74,12 @@ class SurgeTrader:
             client: 외부 BybitClient 주입 (통합 실행 시)
             notifier: 외부 TelegramNotifier 주입 (통합 실행 시)
             telegram_bot: 외부 TelegramBot 주입 (통합 실행 시)
+            get_excluded_symbols: 다른 전략이 보유 중인 심볼 조회 콜백
         """
         self.paper = paper
         self.testnet = testnet
         self.running = False
+        self.get_excluded_symbols = get_excluded_symbols
 
         # 안전장치 설정
         self.initial_balance = initial_balance
@@ -88,9 +95,17 @@ class SurgeTrader:
         self.client = client or BybitClient(testnet=testnet)
         self.data_fetcher = DataFetcher(self.client)
 
-        # Early Surge Detector
-        self.detector = EarlySurgeDetector(self.data_fetcher, EARLY_SURGE_PARAMS)
-        self.params = EARLY_SURGE_PARAMS
+        # Mirror Short 파라미터
+        self.params = MIRROR_SHORT_PARAMS
+        self.mirror_params = MirrorShortParams(
+            overheat_cum_rise_pct=self.params['overheat_cum_rise_pct'],
+            overheat_upper_wick_pct=self.params['overheat_upper_wick_pct'],
+            overheat_volume_ratio=self.params['overheat_volume_ratio'],
+            volume_lookback=self.params['volume_lookback'],
+            stop_loss_pct=self.params['sl_pct'],
+            trail_start_pct=self.params['trail_start_pct'],
+            trail_rebound_pct=self.params['trail_rebound_pct'],
+        )
 
         # 텔레그램 (외부 주입 또는 자체 생성)
         self.notifier = notifier or TelegramNotifier()
@@ -112,7 +127,7 @@ class SurgeTrader:
         self.trade_history: list = []
 
         # 상태 저장 파일 경로
-        self.state_file = "data/surge_bot_state.json"
+        self.state_file = "data/mirror_short_bot_state.json"
 
         # 실제 잔고로 초기 자금 설정
         if not self.paper:
@@ -128,7 +143,7 @@ class SurgeTrader:
         # 시작 로그
         mode = "PAPER" if self.paper else "LIVE"
         net = "TESTNET" if self.testnet else "MAINNET"
-        logger.info(f"SurgeTrader 시작 - 모드: {mode}, 네트워크: {net}")
+        logger.info(f"MirrorShort 시작 - 모드: {mode}, 네트워크: {net}")
         logger.info(f"계좌 잔고: ${self.initial_balance:,.2f}")
         logger.info(f"일일 손실 한도: ${self.daily_loss_limit:,.2f} ({self.daily_loss_limit_pct}%)")
         logger.info(f"최대 포지션: {self.max_positions}개")
@@ -388,11 +403,6 @@ class SurgeTrader:
                 return result
 
             closed_pnl_list = self.client.get_closed_pnl(limit=50)
-            closed_pnl_map = {}
-            for pnl in closed_pnl_list:
-                sym = pnl['symbol']
-                if sym not in closed_pnl_map:
-                    closed_pnl_map[sym] = pnl
 
             for symbol in closed_symbols:
                 pos = self.positions[symbol]
@@ -400,8 +410,16 @@ class SurgeTrader:
                 entry = float(pos["entry_price"])
                 qty = float(pos.get("size", 0))
 
-                if symbol in closed_pnl_map:
-                    pnl_record = closed_pnl_map[symbol]
+                # 진입가가 일치하는 청산 기록만 매칭 (다른 전략 기록 방지)
+                pnl_record = None
+                for pnl in closed_pnl_list:
+                    if pnl['symbol'] == symbol:
+                        pnl_entry = float(pnl.get('entry_price', 0))
+                        if entry > 0 and abs(pnl_entry - entry) / entry < 0.001:
+                            pnl_record = pnl
+                            break
+
+                if pnl_record:
                     exit_price = pnl_record['exit_price']
                     pnl_usd = pnl_record['closed_pnl']
                     if entry > 0 and qty > 0:
@@ -470,6 +488,79 @@ class SurgeTrader:
         qty = round(qty, 3)
         return qty
 
+    def _get_5m_data(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:
+        """5분봉 데이터 조회"""
+        try:
+            df = self.data_fetcher.get_ohlcv(symbol, '5m', limit=limit)
+            if df is not None:
+                df = df.reset_index()
+            return df
+        except Exception as e:
+            logger.debug(f"5분봉 데이터 조회 실패 ({symbol}): {e}")
+            return None
+
+    def _detect_mirror_short_signal(self, symbol: str, df: pd.DataFrame) -> Optional[dict]:
+        """Mirror Short 시그널 감지 (급등 + 과열 확인)"""
+        if df is None or len(df) < 40:
+            return None
+
+        work = df.copy()
+        work["volume_sma"] = work["volume"].rolling(self.params['volume_lookback']).mean()
+        work["volume_ratio"] = work["volume"] / work["volume_sma"]
+        work["change_pct"] = work["close"].pct_change() * 100.0
+        work["is_green"] = work["close"] > work["open"]
+
+        lookback = self.params['consolidation_lookback']
+        range_high = work["high"].rolling(lookback).max().shift(1)
+        range_low = work["low"].rolling(lookback).min().shift(1)
+        work["consol_range_pct"] = (range_high - range_low) / range_low * 100.0
+        work["price_from_low"] = (work["close"] - work["low"].shift(1)) / work["low"].shift(1) * 100.0
+
+        # 최신 봉 확인 (직전 봉이 급등 시그널이면 현재 봉에서 진입)
+        # 백테스트의 delay_candles=1 로직 반영: 직전 봉(idx -1)에서 급등+과열 확인
+        idx = len(work) - 2  # 직전 봉
+        if idx < 1:
+            return None
+
+        row = work.iloc[idx]
+        vol_ratio = float(row.get("volume_ratio", 0))
+        change_pct = float(row.get("change_pct", 0))
+        is_green = bool(row.get("is_green", False))
+        consol_range = float(row.get("consol_range_pct", 999))
+        price_from_low = float(row.get("price_from_low", 999))
+
+        # 급등 조건
+        surge_ok = (
+            vol_ratio >= self.params['volume_spike_threshold']
+            and change_pct >= self.params['price_change_threshold']
+            and is_green
+            and consol_range <= self.params['consolidation_range_pct']
+            and price_from_low <= self.params['max_entry_price_from_low']
+        )
+
+        if not surge_ok:
+            return None
+
+        # 과열 확인
+        if not overheat_confirmed(df, idx, self.mirror_params):
+            return None
+
+        # 현재 봉의 open 가격으로 진입 (현재가)
+        current_price = float(df.iloc[-1]['close'])
+        stop_loss = current_price * (1 + self.params['sl_pct'] / 100)
+
+        return {
+            "symbol": symbol,
+            "side": "short",
+            "price": current_price,
+            "stop_loss": stop_loss,
+            "take_profit": 0,
+            "surge_info": {
+                "volume_ratio": vol_ratio,
+                "price_change": change_pct,
+            }
+        }
+
     def _open_position(self, signal: dict, free_balance: float) -> float:
         """포지션 오픈"""
         symbol = signal["symbol"]
@@ -483,7 +574,7 @@ class SurgeTrader:
             logger.warning("주문 수량이 0 이하입니다.")
             return 0.0
 
-        logger.info(f"[ENTRY] {symbol} {side.upper()} | Price=${price:.4f}, Qty={qty}, SL=${stop_loss:.4f}, TP=${take_profit:.4f}")
+        logger.info(f"[ENTRY] {symbol} {side.upper()} | Price=${price:.4f}, Qty={qty}, SL=${stop_loss:.4f}")
 
         if not self.paper:
             try:
@@ -493,10 +584,11 @@ class SurgeTrader:
 
             try:
                 order_side = "buy" if side == "long" else "sell"
+                tp_arg = take_profit if take_profit and take_profit > 0 else None
                 self.client.market_order_with_sl_tp(
                     symbol, order_side, qty,
                     stop_loss=stop_loss,
-                    take_profit=take_profit
+                    take_profit=tp_arg
                 )
             except Exception as e:
                 logger.error(f"진입 실패 ({symbol}): {e}")
@@ -513,10 +605,10 @@ class SurgeTrader:
             "take_profit": take_profit,
             "highest": price,
             "lowest": price,
-            "trail_stop": stop_loss,
+            "trail_stop": None,
             "trailing": False,
             "size": qty,
-            "strategy": "surge",
+            "strategy": "mirror_short",
         }
 
         # 텔레그램 알림
@@ -526,15 +618,15 @@ class SurgeTrader:
 
         short_sym = symbol.split('/')[0]
         message = (
-            f"🚀 <b>급등 진입: {short_sym}</b>\n\n"
+            f"📉 <b>미러숏 진입: {short_sym}</b>\n\n"
             f"진입가: ${price:.4f}\n"
             f"수량: {qty}\n"
             f"레버리지: {self.params['leverage']}x\n\n"
-            f"📊 급등 시그널\n"
+            f"📊 과열 시그널\n"
             f"거래량: {vol_ratio:.1f}배\n"
             f"가격 상승: +{price_change:.1f}%\n\n"
-            f"손절: ${stop_loss:.4f} (-{self.params['sl_pct']}%)\n"
-            f"익절: ${take_profit:.4f} (+{self.params['tp_pct']}%)"
+            f"손절: ${stop_loss:.4f} (+{self.params['sl_pct']}%)\n"
+            f"트레일링: {self.params['trail_start_pct']}% 하락 시 활성화"
         )
         self.notifier.send_sync(message)
 
@@ -615,7 +707,7 @@ class SurgeTrader:
         self._save_state()
 
     def _check_exit_signals(self, symbol: str, df: pd.DataFrame):
-        """청산 신호 체크 (트레일링 스톱 포함)"""
+        """청산 신호 체크 (숏 트레일링 스톱)"""
         pos = self.positions.get(symbol)
         if not pos:
             return
@@ -623,60 +715,35 @@ class SurgeTrader:
         current_price = float(df.iloc[-1]['close'])
         entry_price = float(pos['entry_price'])
         stop_loss = float(pos['stop_loss'])
-        take_profit = float(pos['take_profit'])
-        side = pos['side']
 
-        # 현재 수익률
-        if side == "long":
-            pnl_pct = (current_price - entry_price) / entry_price * 100
-        else:
-            pnl_pct = (entry_price - current_price) / entry_price * 100
+        # 숏 수익률 (가격 하락 = 수익)
+        pnl_pct = (entry_price - current_price) / entry_price * 100
 
-        # 손절 체크
-        if side == "long" and current_price <= stop_loss:
-            self._close_position(symbol, {"price": current_price, "reason": "손절"})
-            return
-        elif side == "short" and current_price >= stop_loss:
+        # 손절 체크 (숏: 가격 상승 시 손절)
+        if current_price >= stop_loss:
             self._close_position(symbol, {"price": current_price, "reason": "손절"})
             return
 
-        # 익절 체크
-        if side == "long" and current_price >= take_profit:
-            self._close_position(symbol, {"price": current_price, "reason": "익절"})
-            return
-        elif side == "short" and current_price <= take_profit:
-            self._close_position(symbol, {"price": current_price, "reason": "익절"})
-            return
-
-        # 트레일링 스톱 활성화
+        # 트레일링 스톱
         trail_start_pct = self.params['trail_start_pct']
-        trail_pct = self.params['trail_pct']
+        trail_rebound_pct = self.params['trail_rebound_pct']
 
         if pnl_pct >= trail_start_pct:
             if not pos.get('trailing'):
                 pos['trailing'] = True
-                logger.info(f"[TRAIL] {symbol} 트레일링 스톱 활성화 (수익률: {pnl_pct:.1f}%)")
+                pos['lowest'] = current_price
+                logger.info(f"[TRAIL] {symbol} 트레일링 활성화 (수익률: {pnl_pct:.1f}%)")
 
-            # 최고가 업데이트
-            if side == "long":
-                if current_price > pos['highest']:
-                    pos['highest'] = current_price
-                    pos['trail_stop'] = current_price * (1 - trail_pct / 100)
-                    logger.debug(f"[TRAIL] {symbol} 트레일링 스톱 업데이트: ${pos['trail_stop']:.4f}")
+            # 최저가 추적 (숏이므로 lowest 추적)
+            if current_price < pos['lowest']:
+                pos['lowest'] = current_price
+                pos['trail_stop'] = current_price * (1 + trail_rebound_pct / 100)
+                logger.debug(f"[TRAIL] {symbol} trail_stop 업데이트: ${pos['trail_stop']:.4f}")
 
-                # 트레일링 스톱 도달
-                if current_price <= pos['trail_stop']:
-                    self._close_position(symbol, {"price": current_price, "reason": "트레일링 스톱"})
-                    return
-            else:
-                if current_price < pos['lowest']:
-                    pos['lowest'] = current_price
-                    pos['trail_stop'] = current_price * (1 + trail_pct / 100)
-                    logger.debug(f"[TRAIL] {symbol} 트레일링 스톱 업데이트: ${pos['trail_stop']:.4f}")
-
-                if current_price >= pos['trail_stop']:
-                    self._close_position(symbol, {"price": current_price, "reason": "트레일링 스톱"})
-                    return
+            # 리바운드 시 청산
+            if pos.get('trail_stop') and current_price >= pos['trail_stop']:
+                self._close_position(symbol, {"price": current_price, "reason": "트레일링 스톱"})
+                return
 
     def run_once(self):
         """한 번 스캔 및 실행"""
@@ -690,7 +757,7 @@ class SurgeTrader:
 
         # 기존 포지션 청산 체크
         for symbol in list(self.positions.keys()):
-            df = self.detector.get_5m_data(symbol, limit=50)
+            df = self._get_5m_data(symbol, limit=50)
             if df is not None:
                 self._check_exit_signals(symbol, df)
 
@@ -709,8 +776,8 @@ class SurgeTrader:
             logger.warning("[WAIT] 사용 가능 잔고 없음")
             return
 
-        # Early Surge 스캔
-        logger.info("[SCAN] 초기 급등 스캔 시작...")
+        # Mirror Short 스캔
+        logger.info("[SCAN] 미러숏 스캔 시작...")
 
         # USDT 무기한 선물 전체 스캔 (빠른 스캔)
         try:
@@ -729,26 +796,37 @@ class SurgeTrader:
         import random
         scan_symbols = random.sample(usdt_perps, min(100, len(usdt_perps)))
 
+        # 다른 전략 보유 심볼 제외
+        excluded = set()
+        if self.get_excluded_symbols:
+            try:
+                excluded = self.get_excluded_symbols()
+            except Exception:
+                pass
+
         signals = []
         for symbol in scan_symbols:
-            # 이미 포지션 있으면 스킵
-            if symbol in self.positions:
+            # 이미 포지션 있거나 다른 전략이 보유 중이면 스킵
+            if symbol in self.positions or symbol in excluded:
                 continue
 
-            # 최근 청산한 코인은 재진입 쿨타임
+            # 최근 청산한 코인은 재진입 쿨타임 (15분 = 백테스트 3캔들)
             last_exit = self.last_exit_times.get(symbol)
             if last_exit:
-                cooldown = timedelta(minutes=30)
+                cooldown = timedelta(minutes=15)
                 if datetime.utcnow() - last_exit < cooldown:
                     continue
 
             try:
-                signal = self.detector.get_entry_signal(symbol)
+                df = self._get_5m_data(symbol, limit=100)
+                if df is None:
+                    continue
+                signal = self._detect_mirror_short_signal(symbol, df)
                 if signal:
                     signals.append(signal)
                     surge_info = signal['surge_info']
                     logger.info(
-                        f"[SURGE] {symbol} | "
+                        f"[MIRROR-SHORT] {symbol} | "
                         f"Vol={surge_info['volume_ratio']:.1f}x "
                         f"Change={surge_info['price_change']:.1f}%"
                     )
@@ -757,7 +835,7 @@ class SurgeTrader:
                 continue
 
         if not signals:
-            logger.info("[WAIT] 급등 신호 없음")
+            logger.info("[WAIT] 미러숏 신호 없음")
             return
 
         # 거래량 비율 순으로 정렬
@@ -788,14 +866,14 @@ class SurgeTrader:
     async def run_async(self):
         """비동기 실행 루프"""
         mode = "PAPER" if self.paper else "LIVE"
-        logger.info(f"SurgeTrader 루프 시작 [{mode}]")
+        logger.info(f"MirrorShort 루프 시작 [{mode}]")
 
         # 텔레그램 봇 시작
         await self.telegram_bot.start_polling()
 
         # 시작 알림
         self.notifier.send_sync(
-            f"🚀 <b>Early Surge Bot 시작</b>\n\n"
+            f"📉 <b>Mirror Short Bot 시작</b>\n\n"
             f"모드: {mode}\n"
             f"초기 자금: ${self.initial_balance:,.0f}\n"
             f"일일 손실 한도: ${self.daily_loss_limit:,.0f} ({self.daily_loss_limit_pct}%)\n"
