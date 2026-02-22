@@ -801,6 +801,12 @@ class IchimokuTrader:
         except Exception as e:
             logger.error(f"시황 리포트 전송 실패: {e}")
 
+    def check_positions(self):
+        """포지션 상태만 체크 (수동/거래소 청산 감지). 자주 호출용."""
+        if not self.positions:
+            return
+        self._check_manual_closes()
+
     def run_once(self):
         """한 번 스캔 및 실행"""
         params = STRATEGY_PARAMS

@@ -296,6 +296,17 @@ class UnifiedTrader:
             logger.info(f"[이치모쿠] 다음 캔들까지 {sleep_seconds/60:.1f}분 대기")
             await asyncio.sleep(sleep_seconds)
 
+    async def _ichimoku_position_loop(self):
+        """이치모쿠 포지션 모니터링 루프 (5분마다 청산 감지)"""
+        while True:
+            if self.ichimoku.running and self.ichimoku.positions:
+                try:
+                    self.ichimoku.check_positions()
+                except Exception as e:
+                    logger.error(f"[이치모쿠] 포지션 체크 오류: {e}")
+
+            await asyncio.sleep(300)  # 5분
+
     async def _surge_loop(self):
         """미러숏 루프 (5분마다)"""
         while True:
@@ -363,12 +374,17 @@ class UnifiedTrader:
 
         # 전략을 별도 asyncio Task로 실행
         ichimoku_task = asyncio.create_task(self._ichimoku_loop())
+        ichimoku_pos_task = asyncio.create_task(self._ichimoku_position_loop())
         surge_task = asyncio.create_task(self._surge_loop())
         ma100_scan_task = asyncio.create_task(self._ma100_scan_loop())
         ma100_pos_task = asyncio.create_task(self._ma100_position_loop())
 
         try:
-            await asyncio.gather(ichimoku_task, surge_task, ma100_scan_task, ma100_pos_task)
+            await asyncio.gather(
+                ichimoku_task, ichimoku_pos_task,
+                surge_task,
+                ma100_scan_task, ma100_pos_task
+            )
         except asyncio.CancelledError:
             logger.info("통합 봇 종료")
         finally:
