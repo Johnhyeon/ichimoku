@@ -727,14 +727,23 @@ class MA100Trader:
 
     # ==================== 메인 실행 ====================
 
-    def run_once(self):
-        """한 번 스캔 및 실행"""
-        # 수동 청산 감지
+    def check_positions(self):
+        """포지션 상태만 체크 (수동/거래소 청산 감지 + 트레일링 보완). 자주 호출용."""
+        if not self.positions:
+            return
+
         self._check_manual_closes()
 
-        # 기존 포지션: 트레일링 스톱 보완 + exit 체크
         for symbol in list(self.positions.keys()):
             self._ensure_trailing_stop(symbol)
+
+    def run_once(self):
+        """일봉 갱신 시 전체 스캔 + 시그널 진입"""
+        # 포지션 체크 (청산 감지 + 트레일링 보완)
+        self.check_positions()
+
+        # 기존 포지션 exit 체크 (시그널 반전 등 일봉 데이터 필요한 로직)
+        for symbol in list(self.positions.keys()):
             df = self._get_1d_data(symbol, limit=150)
             if df is not None:
                 self._check_exit_signals(symbol, df)

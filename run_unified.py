@@ -313,26 +313,33 @@ class UnifiedTrader:
             logger.info("[미러숏] 5분 대기...")
             await asyncio.sleep(300)
 
-    async def _ma100_loop(self):
-        """MA100 루프 (하루 1회, 일봉 갱신 시마다)"""
+    async def _ma100_scan_loop(self):
+        """MA100 시그널 스캔 루프 (하루 1회, 일봉 갱신 시)"""
         while True:
             if self.ma100.running:
                 try:
                     self.ma100.run_once()
-
-                    # 잔고 기록
                     self._record_balance()
-
                 except Exception as e:
-                    logger.error(f"[MA100] 루프 오류: {e}")
-                    self.notifier.send_sync(f"⚠️ MA100 오류: {e}")
+                    logger.error(f"[MA100] 스캔 오류: {e}")
+                    self.notifier.send_sync(f"⚠️ MA100 스캔 오류: {e}")
 
-            # 다음 일봉 캔들까지 대기
             next_candle = self.ma100.data_fetcher.get_next_candle_time("1d")
             now = datetime.utcnow()
             sleep_seconds = max(60, (next_candle - now).total_seconds())
             logger.info(f"[MA100] 다음 일봉까지 {sleep_seconds/3600:.1f}시간 대기")
             await asyncio.sleep(sleep_seconds)
+
+    async def _ma100_position_loop(self):
+        """MA100 포지션 모니터링 루프 (5분마다 청산 감지)"""
+        while True:
+            if self.ma100.running and self.ma100.positions:
+                try:
+                    self.ma100.check_positions()
+                except Exception as e:
+                    logger.error(f"[MA100] 포지션 체크 오류: {e}")
+
+            await asyncio.sleep(300)  # 5분
 
     async def run_async(self):
         """세 전략을 하나의 asyncio 루프에서 실행"""
@@ -354,13 +361,14 @@ class UnifiedTrader:
         self.surge.running = True
         self.ma100.running = True
 
-        # 세 전략을 별도 asyncio Task로 실행
+        # 전략을 별도 asyncio Task로 실행
         ichimoku_task = asyncio.create_task(self._ichimoku_loop())
         surge_task = asyncio.create_task(self._surge_loop())
-        ma100_task = asyncio.create_task(self._ma100_loop())
+        ma100_scan_task = asyncio.create_task(self._ma100_scan_loop())
+        ma100_pos_task = asyncio.create_task(self._ma100_position_loop())
 
         try:
-            await asyncio.gather(ichimoku_task, surge_task, ma100_task)
+            await asyncio.gather(ichimoku_task, surge_task, ma100_scan_task, ma100_pos_task)
         except asyncio.CancelledError:
             logger.info("통합 봇 종료")
         finally:
