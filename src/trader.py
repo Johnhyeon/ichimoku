@@ -95,10 +95,14 @@ class IchimokuTrader:
         # BTC 트렌드
         self.btc_uptrend: Optional[bool] = None
 
+        # 레버리지/진입비율 (런타임 변경 가능)
+        self.leverage = LEVERAGE
+        self.position_pct = POSITION_PCT
+
         # 시작 로그
         mode = "PAPER" if self.paper else "LIVE"
         logger.info(f"IchimokuTrader 시작 - 모드: {mode}, 테스트넷: {self.testnet}")
-        logger.info(f"레버리지: {LEVERAGE}x, 포지션 크기: {POSITION_PCT*100}%")
+        logger.info(f"레버리지: {self.leverage}x, 포지션 크기: {self.position_pct*100}%")
 
         # 거래소에서 기존 포지션 동기화
         self._sync_positions()
@@ -385,9 +389,9 @@ class IchimokuTrader:
                 # 수익률 계산
                 if entry > 0 and current_price > 0:
                     if side == "long":
-                        pnl_pct = (current_price - entry) / entry * 100 * LEVERAGE
+                        pnl_pct = (current_price - entry) / entry * 100 * self.leverage
                     else:
-                        pnl_pct = (entry - current_price) / entry * 100 * LEVERAGE
+                        pnl_pct = (entry - current_price) / entry * 100 * self.leverage
                 else:
                     pnl_pct = 0
 
@@ -400,7 +404,7 @@ class IchimokuTrader:
                 pos_copy["current_price"] = current_price
                 pos_copy["sl_pct"] = sl_pct
                 pos_copy["tp_pct"] = tp_pct
-                pos_copy["leverage"] = ex_pos.get("leverage", LEVERAGE)
+                pos_copy["leverage"] = ex_pos.get("leverage", self.leverage)
 
                 result.append(pos_copy)
 
@@ -453,8 +457,8 @@ class IchimokuTrader:
         if free_balance <= 0:
             return 0.0
 
-        margin = free_balance * POSITION_PCT
-        position_value = margin * LEVERAGE
+        margin = free_balance * self.position_pct
+        position_value = margin * self.leverage
         qty = position_value / price
         qty = round(qty, 3)
         return qty
@@ -476,7 +480,7 @@ class IchimokuTrader:
 
         if not self.paper:
             try:
-                self.client.set_leverage(symbol, LEVERAGE)
+                self.client.set_leverage(symbol, self.leverage)
             except Exception as e:
                 logger.warning(f"레버리지 설정 실패: {e}")
 
@@ -519,7 +523,7 @@ class IchimokuTrader:
         # 상태 저장
         self._save_state()
 
-        used_margin = (price * qty) / LEVERAGE
+        used_margin = (price * qty) / self.leverage
         return used_margin
 
     async def _send_entry_analysis(self, symbol: str, df: pd.DataFrame, side: str):
@@ -561,11 +565,11 @@ class IchimokuTrader:
 
         # PnL 계산
         if side == "long":
-            pnl_pct = (price - entry) / entry * 100 * LEVERAGE
+            pnl_pct = (price - entry) / entry * 100 * self.leverage
         else:
-            pnl_pct = (entry - price) / entry * 100 * LEVERAGE
+            pnl_pct = (entry - price) / entry * 100 * self.leverage
 
-        pnl_usd = pnl_pct / 100 * (entry * qty) / LEVERAGE
+        pnl_usd = pnl_pct / 100 * (entry * qty) / self.leverage
 
         # 텔레그램 알림
         self.notifier.notify_exit(symbol, side, entry, price, pnl_pct, pnl_usd, reason)
@@ -640,12 +644,6 @@ class IchimokuTrader:
 
             # 바이빗에서 최근 청산 이력 조회
             closed_pnl_list = self.client.get_closed_pnl(limit=50)
-            closed_pnl_map = {}
-            for pnl in closed_pnl_list:
-                sym = pnl['symbol']
-                # 같은 심볼의 가장 최근 청산 기록 사용
-                if sym not in closed_pnl_map:
-                    closed_pnl_map[sym] = pnl
 
             # 수동 청산된 포지션 처리
             for symbol in closed_symbols:
@@ -654,14 +652,22 @@ class IchimokuTrader:
                 entry = float(pos["entry_price"])
                 qty = float(pos.get("size", 0))
 
+                # 진입가가 일치하는 청산 기록만 매칭 (다른 전략 기록 방지)
+                pnl_record = None
+                for pnl in closed_pnl_list:
+                    if pnl['symbol'] == symbol:
+                        pnl_entry = float(pnl.get('entry_price', 0))
+                        if entry > 0 and abs(pnl_entry - entry) / entry < 0.001:
+                            pnl_record = pnl
+                            break
+
                 # 바이빗 청산 기록에서 실제 청산가와 PnL 가져오기
-                if symbol in closed_pnl_map:
-                    pnl_record = closed_pnl_map[symbol]
+                if pnl_record:
                     exit_price = pnl_record['exit_price']
                     pnl_usd = pnl_record['closed_pnl']
                     # 실제 PnL에서 수익률 역산
                     if entry > 0 and qty > 0:
-                        pnl_pct = pnl_usd / (entry * qty / LEVERAGE) * 100
+                        pnl_pct = pnl_usd / (entry * qty / self.leverage) * 100
                     else:
                         pnl_pct = 0
                     reason = "수동 청산"
@@ -675,10 +681,10 @@ class IchimokuTrader:
                         exit_price = entry
 
                     if side == "long":
-                        pnl_pct = (exit_price - entry) / entry * 100 * LEVERAGE
+                        pnl_pct = (exit_price - entry) / entry * 100 * self.leverage
                     else:
-                        pnl_pct = (entry - exit_price) / entry * 100 * LEVERAGE
-                    pnl_usd = pnl_pct / 100 * (entry * qty) / LEVERAGE
+                        pnl_pct = (entry - exit_price) / entry * 100 * self.leverage
+                    pnl_usd = pnl_pct / 100 * (entry * qty) / self.leverage
                     reason = "수동 청산 (추정)"
                     logger.info(f"[SYNC] {symbol} 청산 기록 없음, 현재가로 추정 | PnL: {pnl_pct:+.2f}%")
 
