@@ -68,6 +68,8 @@ class DataFetcher:
                 next_candle = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
             else:
                 next_candle = now.replace(minute=minutes, second=0, microsecond=0)
+        elif timeframe == "1d":
+            next_candle = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
         else:
             next_candle = now + timedelta(hours=4)
 

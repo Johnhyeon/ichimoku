@@ -159,6 +159,8 @@ class TelegramBot:
         self.start_ichimoku_callback: Optional[Callable] = None
         self.stop_surge_callback: Optional[Callable] = None
         self.start_surge_callback: Optional[Callable] = None
+        self.stop_ma100_callback: Optional[Callable] = None
+        self.start_ma100_callback: Optional[Callable] = None
 
         # 설정 콜백
         self.get_settings_callback: Optional[Callable] = None
@@ -222,7 +224,9 @@ class TelegramBot:
         stop_ichimoku: Callable = None,
         start_ichimoku: Callable = None,
         stop_surge: Callable = None,
-        start_surge: Callable = None
+        start_surge: Callable = None,
+        stop_ma100: Callable = None,
+        start_ma100: Callable = None
     ):
         """전략별 제어 콜백 설정"""
         self.get_strategy_status_callback = get_strategy_status
@@ -230,6 +234,8 @@ class TelegramBot:
         self.start_ichimoku_callback = start_ichimoku
         self.stop_surge_callback = stop_surge
         self.start_surge_callback = start_surge
+        self.stop_ma100_callback = stop_ma100
+        self.start_ma100_callback = start_ma100
 
     def set_settings_callbacks(
         self,
@@ -339,15 +345,19 @@ class TelegramBot:
 
             ich_running = status.get('ichimoku_running', False)
             surge_running = status.get('surge_running', False)
+            ma100_running = status.get('ma100_running', False)
 
             ich_btn = "⛩️ 이치모쿠 ⏸" if ich_running else "⛩️ 이치모쿠 ▶️"
             ich_data = "ctrl_ich_stop" if ich_running else "ctrl_ich_start"
             surge_btn = "📉 미러숏 ⏸" if surge_running else "📉 미러숏 ▶️"
             surge_data = "ctrl_surge_stop" if surge_running else "ctrl_surge_start"
+            ma100_btn = "📊 MA100 ⏸" if ma100_running else "📊 MA100 ▶️"
+            ma100_data = "ctrl_ma100_stop" if ma100_running else "ctrl_ma100_start"
 
             keyboard = [
                 [InlineKeyboardButton(ich_btn, callback_data=ich_data)],
                 [InlineKeyboardButton(surge_btn, callback_data=surge_data)],
+                [InlineKeyboardButton(ma100_btn, callback_data=ma100_data)],
                 [InlineKeyboardButton("🔄 동기화", callback_data="sync_positions")],
                 [InlineKeyboardButton("← 뒤로", callback_data="back_main")],
             ]
@@ -378,6 +388,8 @@ class TelegramBot:
         ich_pct = int(settings.get('ich_pct', 5))
         surge_lev = settings.get('surge_leverage', 5)
         surge_pct = int(settings.get('surge_pct', 5))
+        ma100_lev = settings.get('ma100_leverage', 5)
+        ma100_pct = int(settings.get('ma100_pct', 5))
 
         keyboard = [
             [InlineKeyboardButton(
@@ -387,6 +399,10 @@ class TelegramBot:
             [InlineKeyboardButton(
                 f"📉 미러숏: {surge_lev}x / {surge_pct}%",
                 callback_data="settings_surge"
+            )],
+            [InlineKeyboardButton(
+                f"📊 MA100: {ma100_lev}x / {ma100_pct}%",
+                callback_data="settings_ma100"
             )],
             [InlineKeyboardButton("← 뒤로", callback_data="back_main")],
         ]
@@ -460,6 +476,40 @@ class TelegramBot:
         ]
         return InlineKeyboardMarkup(keyboard)
 
+    def _get_settings_ma100_keyboard(self) -> InlineKeyboardMarkup:
+        """MA100 설정 키보드"""
+        settings = {}
+        if self.get_settings_callback:
+            try:
+                settings = self.get_settings_callback()
+            except:
+                pass
+
+        cur_lev = settings.get('ma100_leverage', 5)
+        cur_pct = int(settings.get('ma100_pct', 5))
+
+        lev_options = [3, 5, 7, 10]
+        pct_options = [3, 5, 10, 20]
+
+        lev_buttons = []
+        for v in lev_options:
+            label = f"{'→' if v == cur_lev else ''}{v}x"
+            lev_buttons.append(InlineKeyboardButton(label, callback_data=f"set_ma100_lev_{v}"))
+
+        pct_buttons = []
+        for v in pct_options:
+            label = f"{'→' if v == cur_pct else ''}{v}%"
+            pct_buttons.append(InlineKeyboardButton(label, callback_data=f"set_ma100_pct_{v}"))
+
+        keyboard = [
+            [InlineKeyboardButton("📐 레버리지", callback_data="_noop")],
+            lev_buttons,
+            [InlineKeyboardButton("💰 진입비율", callback_data="_noop")],
+            pct_buttons,
+            [InlineKeyboardButton("← 뒤로", callback_data="menu_settings")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
     def _get_back_keyboard(self) -> InlineKeyboardMarkup:
         """뒤로가기만 있는 키보드"""
         keyboard = [[InlineKeyboardButton("← 뒤로", callback_data="back_main")]]
@@ -522,12 +572,13 @@ class TelegramBot:
                 st = self.get_strategy_status_callback()
                 ich_emoji = "🟢" if st.get('ichimoku_running') else "🔴"
                 surge_emoji = "🟢" if st.get('surge_running') else "🔴"
+                ma100_emoji = "🟢" if st.get('ma100_running') else "🔴"
                 surge_pnl = st.get('surge_daily_pnl', 0)
                 surge_limit = st.get('surge_daily_limit', 0)
                 pnl_sign = "+" if surge_pnl >= 0 else ""
 
                 strategy_status_text = f"""
-⛩️ 이치모쿠: {ich_emoji} | 📉 미러숏: {surge_emoji}
+⛩️ 이치모쿠: {ich_emoji} | 📉 미러숏: {surge_emoji} | 📊 MA100: {ma100_emoji}
 🕐 갱신: {now} UTC
 
 📊 <b>미러숏 오늘</b>
@@ -569,9 +620,10 @@ class TelegramBot:
                     # 전략별 그룹화
                     ichimoku_pos = [p for p in positions if p.get('strategy') == 'ichimoku']
                     surge_pos = [p for p in positions if p.get('strategy') in ('surge', 'mirror_short')]
-                    other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge', 'mirror_short')]
+                    ma100_pos = [p for p in positions if p.get('strategy') == 'ma100']
+                    other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge', 'mirror_short', 'ma100')]
 
-                    has_groups = bool(ichimoku_pos) or bool(surge_pos)
+                    has_groups = bool(ichimoku_pos) or bool(surge_pos) or bool(ma100_pos)
 
                     if has_groups:
                         positions_text = "\n\n📋 <b>포지션</b>"
@@ -582,6 +634,10 @@ class TelegramBot:
                         if surge_pos:
                             positions_text += "\n\n📉 <b>미러숏</b>"
                             for p in surge_pos:
+                                positions_text += self._format_position_line(p)
+                        if ma100_pos:
+                            positions_text += "\n\n📊 <b>MA100</b>"
+                            for p in ma100_pos:
                                 positions_text += self._format_position_line(p)
                         if other_pos:
                             for p in other_pos:
@@ -794,12 +850,26 @@ class TelegramBot:
             await self._safe_edit_message(query, text, self._get_settings_surge_keyboard())
             return
 
+        # MA100 설정 화면
+        if data == "settings_ma100":
+            settings = {}
+            if self.get_settings_callback:
+                try:
+                    settings = self.get_settings_callback()
+                except:
+                    pass
+            cur_lev = settings.get('ma100_leverage', 5)
+            cur_pct = int(settings.get('ma100_pct', 5))
+            text = f"📊 <b>MA100 설정</b>\n\n현재: {cur_lev}x / {cur_pct}%"
+            await self._safe_edit_message(query, text, self._get_settings_ma100_keyboard())
+            return
+
         # 설정 변경 콜백
-        if data.startswith("set_ich_lev_") or data.startswith("set_surge_lev_"):
+        if data.startswith("set_ich_lev_") or data.startswith("set_surge_lev_") or data.startswith("set_ma100_lev_"):
             await self._handle_set_leverage(query, data)
             return
 
-        if data.startswith("set_ich_pct_") or data.startswith("set_surge_pct_"):
+        if data.startswith("set_ich_pct_") or data.startswith("set_surge_pct_") or data.startswith("set_ma100_pct_"):
             await self._handle_set_position_pct(query, data)
             return
 
@@ -849,6 +919,20 @@ class TelegramBot:
             if self.start_surge_callback:
                 self.start_surge_callback()
             text = "▶️ 미러숏 전략 시작됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        if data == "ctrl_ma100_stop":
+            if self.stop_ma100_callback:
+                self.stop_ma100_callback()
+            text = "⏸ MA100 전략 중지됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        if data == "ctrl_ma100_start":
+            if self.start_ma100_callback:
+                self.start_ma100_callback()
+            text = "▶️ MA100 전략 시작됨"
             await self._safe_edit_message(query, text, self._get_control_keyboard())
             return
 
@@ -986,8 +1070,9 @@ class TelegramBot:
                 # 전략별 그룹화
                 ichimoku_pos = [p for p in positions if p.get('strategy') == 'ichimoku']
                 surge_pos = [p for p in positions if p.get('strategy') in ('surge', 'mirror_short')]
-                other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge', 'mirror_short')]
-                has_groups = bool(ichimoku_pos) or bool(surge_pos)
+                ma100_pos = [p for p in positions if p.get('strategy') == 'ma100']
+                other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge', 'mirror_short', 'ma100')]
+                has_groups = bool(ichimoku_pos) or bool(surge_pos) or bool(ma100_pos)
 
                 ordered_positions = []
                 if has_groups:
@@ -995,6 +1080,8 @@ class TelegramBot:
                         ordered_positions.append(("⛩️ <b>이치모쿠</b>", ichimoku_pos))
                     if surge_pos:
                         ordered_positions.append(("📉 <b>미러숏</b>", surge_pos))
+                    if ma100_pos:
+                        ordered_positions.append(("📊 <b>MA100</b>", ma100_pos))
                     if other_pos:
                         ordered_positions.append(("📋 <b>기타</b>", other_pos))
                 else:
@@ -1110,7 +1197,7 @@ class TelegramBot:
                 text += "━━━━━━━━━━━━━━━━\n"
 
                 # 전략별 통계
-                strat_map = {'ichimoku': '⛩️', 'mirror_short': '📉', 'surge': '📉'}
+                strat_map = {'ichimoku': '⛩️', 'mirror_short': '📉', 'surge': '📉', 'ma100': '📊'}
                 strat_groups = {}
                 for h in history:
                     s = h.get('strategy', '')
@@ -1118,7 +1205,7 @@ class TelegramBot:
 
                 for s_name, s_trades in strat_groups.items():
                     s_emoji = strat_map.get(s_name, '📋')
-                    s_label = {'ichimoku': '이치모쿠', 'mirror_short': '미러숏', 'surge': '미러숏'}.get(s_name, s_name or '기타')
+                    s_label = {'ichimoku': '이치모쿠', 'mirror_short': '미러숏', 'surge': '미러숏', 'ma100': 'MA100'}.get(s_name, s_name or '기타')
                     s_pnl = sum(t.get('pnl_usd', 0) for t in s_trades)
                     s_wins = sum(1 for t in s_trades if t.get('pnl_usd', 0) > 0)
                     s_total = len(s_trades)
@@ -1133,6 +1220,7 @@ class TelegramBot:
                     ('ichimoku', '⛩️ <b>이치모쿠</b>'),
                     ('mirror_short', '📉 <b>미러숏</b>'),
                     ('surge', '📉 <b>미러숏</b>'),
+                    ('ma100', '📊 <b>MA100</b>'),
                 ]
                 shown_labels = set()
 
@@ -1570,6 +1658,7 @@ class TelegramBot:
                 # 전략별 분리
                 ich_trades = [h for h in history if h.get('strategy') == 'ichimoku']
                 surge_trades = [h for h in history if h.get('strategy') in ('mirror_short', 'surge')]
+                ma100_trades = [h for h in history if h.get('strategy') == 'ma100']
 
                 if ich_trades:
                     text += "━━━━━━━━━━━━━━━━\n"
@@ -1580,6 +1669,11 @@ class TelegramBot:
                     text += "━━━━━━━━━━━━━━━━\n"
                     surge_stats = self._calc_strategy_stats(surge_trades)
                     text += self._format_stats_block(surge_stats, "📉 <b>미러숏</b>")
+
+                if ma100_trades:
+                    text += "━━━━━━━━━━━━━━━━\n"
+                    ma100_stats = self._calc_strategy_stats(ma100_trades)
+                    text += self._format_stats_block(ma100_stats, "📊 <b>MA100</b>")
 
             elif api_stats:
                 # 봇 이력이 없으면 바이빗 API 통계만 표시
@@ -1656,15 +1750,35 @@ class TelegramBot:
 
     # ==================== 설정 변경 핸들러 ====================
 
+    def _get_strategy_name(self, strategy: str) -> str:
+        """전략 키 → 표시 이름"""
+        names = {"ich": "이치모쿠", "surge": "미러숏", "ma100": "MA100"}
+        return names.get(strategy, strategy)
+
+    def _get_strategy_key(self, strategy: str) -> str:
+        """전략 약어 → 콜백용 키"""
+        keys = {"ich": "ichimoku", "surge": "surge", "ma100": "ma100"}
+        return keys.get(strategy, strategy)
+
+    def _get_strategy_settings_keyboard(self, strategy: str):
+        """전략별 설정 키보드 반환"""
+        if strategy == "ich":
+            return self._get_settings_ich_keyboard()
+        elif strategy == "surge":
+            return self._get_settings_surge_keyboard()
+        elif strategy == "ma100":
+            return self._get_settings_ma100_keyboard()
+        return self._get_settings_surge_keyboard()
+
     async def _handle_set_leverage(self, query, data: str):
         """레버리지 변경 처리"""
-        # data: set_ich_lev_20 or set_surge_lev_5
+        # data: set_ich_lev_20 or set_surge_lev_5 or set_ma100_lev_5
         parts = data.split("_")
-        strategy = parts[1]  # ich or surge
+        strategy = parts[1]  # ich or surge or ma100
         value = int(parts[3])
 
-        strategy_name = "이치모쿠" if strategy == "ich" else "미러숏"
-        strategy_key = "ichimoku" if strategy == "ich" else "surge"
+        strategy_name = self._get_strategy_name(strategy)
+        strategy_key = self._get_strategy_key(strategy)
 
         old_value = None
         if self.get_settings_callback:
@@ -1684,18 +1798,18 @@ class TelegramBot:
         else:
             text = "❌ 설정 기능 사용 불가"
 
-        keyboard = self._get_settings_ich_keyboard() if strategy == "ich" else self._get_settings_surge_keyboard()
+        keyboard = self._get_strategy_settings_keyboard(strategy)
         await self._safe_edit_message(query, text, keyboard)
 
     async def _handle_set_position_pct(self, query, data: str):
         """진입비율 변경 처리"""
-        # data: set_ich_pct_5 or set_surge_pct_10
+        # data: set_ich_pct_5 or set_surge_pct_10 or set_ma100_pct_5
         parts = data.split("_")
-        strategy = parts[1]  # ich or surge
+        strategy = parts[1]  # ich or surge or ma100
         value = int(parts[3])
 
-        strategy_name = "이치모쿠" if strategy == "ich" else "미러숏"
-        strategy_key = "ichimoku" if strategy == "ich" else "surge"
+        strategy_name = self._get_strategy_name(strategy)
+        strategy_key = self._get_strategy_key(strategy)
 
         old_value = None
         if self.get_settings_callback:
@@ -1715,7 +1829,7 @@ class TelegramBot:
         else:
             text = "❌ 설정 기능 사용 불가"
 
-        keyboard = self._get_settings_ich_keyboard() if strategy == "ich" else self._get_settings_surge_keyboard()
+        keyboard = self._get_strategy_settings_keyboard(strategy)
         await self._safe_edit_message(query, text, keyboard)
 
     # ==================== 봇 시작/종료 ====================

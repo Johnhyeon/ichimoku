@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-통합 봇 - 이치모쿠 + 미러숏 전략 동시 실행
+통합 봇 - 이치모쿠 + 미러숏 + MA100 전략 동시 실행
 
-하나의 프로세스에서 두 전략을 함께 실행합니다:
+하나의 프로세스에서 세 전략을 함께 실행합니다:
   - 이치모쿠: 4시간봉 기반 SHORT 전략 (레버리지 20x)
   - 미러숏: 5분봉 기반 SHORT 전략 (레버리지 5x)
+  - MA100: 일봉 기반 LONG+SHORT 전략 (레버리지 5x)
 
 텔레그램 봇 1개로 통합 관리하므로 409 Conflict 없이 동작합니다.
 
@@ -25,6 +26,7 @@ from src.bybit_client import BybitClient
 from src.telegram_bot import TelegramNotifier, TelegramBot
 from src.trader import IchimokuTrader
 from src.surge_trader import SurgeTrader
+from src.ma100_trader import MA100Trader
 from src.balance_tracker import BalanceTracker
 from src.chart_generator import ChartGenerator
 
@@ -42,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 class UnifiedTrader:
-    """이치모쿠 + 미러숏 통합 트레이더"""
+    """이치모쿠 + 미러숏 + MA100 통합 트레이더"""
 
     def __init__(
         self,
@@ -50,7 +52,8 @@ class UnifiedTrader:
         testnet: bool = False,
         initial_balance: float = 1000.0,
         daily_loss_limit_pct: float = 20.0,
-        surge_max_positions: int = 3
+        surge_max_positions: int = 3,
+        ma100_max_positions: int = 5
     ):
         self.paper = paper
         self.testnet = testnet
@@ -71,7 +74,18 @@ class UnifiedTrader:
             telegram_bot=self.telegram_bot
         )
 
-        # 미러숏 전략 (공유 리소스 주입, 이치모쿠 심볼 제외)
+        # MA100 전략 (공유 리소스 주입, 이치모쿠+미러숏 심볼 제외)
+        self.ma100 = MA100Trader(
+            paper=paper,
+            testnet=testnet,
+            max_positions=ma100_max_positions,
+            client=self.client,
+            notifier=self.notifier,
+            telegram_bot=self.telegram_bot,
+            get_excluded_symbols=lambda: set(self.ichimoku.positions.keys()) | set(self.surge.positions.keys())
+        )
+
+        # 미러숏 전략 (공유 리소스 주입, 이치모쿠+MA100 심볼 제외)
         self.surge = SurgeTrader(
             paper=paper,
             testnet=testnet,
@@ -81,7 +95,7 @@ class UnifiedTrader:
             client=self.client,
             notifier=self.notifier,
             telegram_bot=self.telegram_bot,
-            get_excluded_symbols=lambda: set(self.ichimoku.positions.keys())
+            get_excluded_symbols=lambda: set(self.ichimoku.positions.keys()) | set(self.ma100.positions.keys())
         )
 
         # 텔레그램 콜백을 통합 메서드로 재등록
@@ -123,7 +137,9 @@ class UnifiedTrader:
             stop_ichimoku=self.ichimoku.stop,
             start_ichimoku=self.ichimoku.resume,
             stop_surge=self.surge.stop,
-            start_surge=self.surge.resume
+            start_surge=self.surge.resume,
+            stop_ma100=self.ma100.stop,
+            start_ma100=self.ma100.resume
         )
 
         # 설정 콜백
@@ -138,11 +154,14 @@ class UnifiedTrader:
         return {
             'ichimoku_running': self.ichimoku.running,
             'surge_running': self.surge.running,
+            'ma100_running': self.ma100.running,
             'surge_daily_pnl': self.surge.daily_pnl,
             'surge_daily_limit': self.surge.daily_loss_limit,
             'surge_positions': len(self.surge.positions),
             'surge_max_positions': self.surge.max_positions,
             'ichimoku_positions': len(self.ichimoku.positions),
+            'ma100_positions': len(self.ma100.positions),
+            'ma100_max_positions': self.ma100.max_positions,
         }
 
     def _get_settings(self) -> dict:
@@ -152,6 +171,8 @@ class UnifiedTrader:
             'ich_pct': self.ichimoku.position_pct * 100,
             'surge_leverage': self.surge.params['leverage'],
             'surge_pct': self.surge.params['position_pct'] * 100,
+            'ma100_leverage': self.ma100.params['leverage'],
+            'ma100_pct': self.ma100.params['position_pct'] * 100,
         }
 
     def _set_leverage(self, strategy: str, value: int):
@@ -162,6 +183,9 @@ class UnifiedTrader:
         elif strategy == 'surge':
             self.surge.params['leverage'] = value
             logger.info(f"[설정] 미러숏 레버리지 → {value}x")
+        elif strategy == 'ma100':
+            self.ma100.params['leverage'] = value
+            logger.info(f"[설정] MA100 레버리지 → {value}x")
 
     def _set_position_pct(self, strategy: str, value: float):
         """전략별 진입비율 변경"""
@@ -171,13 +195,16 @@ class UnifiedTrader:
         elif strategy == 'surge':
             self.surge.params['position_pct'] = value
             logger.info(f"[설정] 미러숏 진입비율 → {value*100:.0f}%")
+        elif strategy == 'ma100':
+            self.ma100.params['position_pct'] = value
+            logger.info(f"[설정] MA100 진입비율 → {value*100:.0f}%")
 
     def _get_balance(self) -> dict:
         """잔고 조회 (공유 client)"""
         return self.ichimoku._get_balance_full()
 
     def _get_all_positions(self) -> list:
-        """두 전략의 포지션 합산"""
+        """세 전략의 포지션 합산"""
         positions = []
         for p in self.ichimoku._get_positions_list():
             p['strategy'] = 'ichimoku'
@@ -185,10 +212,13 @@ class UnifiedTrader:
         for p in self.surge._get_positions_list():
             p['strategy'] = 'mirror_short'
             positions.append(p)
+        for p in self.ma100._get_positions_list():
+            p['strategy'] = 'ma100'
+            positions.append(p)
         return positions
 
     def _get_all_trade_history(self) -> list:
-        """두 전략의 거래 이력 합산"""
+        """세 전략의 거래 이력 합산"""
         history = []
         for h in self.ichimoku._get_trade_history():
             h_copy = h.copy()
@@ -198,27 +228,34 @@ class UnifiedTrader:
             h_copy = h.copy()
             h_copy['strategy'] = 'mirror_short'
             history.append(h_copy)
+        for h in self.ma100._get_trade_history():
+            h_copy = h.copy()
+            h_copy['strategy'] = 'ma100'
+            history.append(h_copy)
         # 시간순 정렬
         history.sort(key=lambda x: x.get('closed_at') or datetime.min, reverse=True)
         return history
 
     def _stop_all(self):
-        """두 전략 모두 중지"""
+        """세 전략 모두 중지"""
         self.ichimoku.stop()
         self.surge.stop()
+        self.ma100.stop()
 
     def _resume_all(self):
-        """두 전략 모두 재개"""
+        """세 전략 모두 재개"""
         self.ichimoku.resume()
         self.surge.resume()
+        self.ma100.resume()
 
     def _sync_all(self) -> dict:
-        """두 전략 모두 포지션 동기화"""
+        """세 전략 모두 포지션 동기화"""
         result1 = self.ichimoku._check_manual_closes() or {"synced": 0, "positions": 0}
         result2 = self.surge._check_manual_closes() or {"synced": 0, "positions": 0}
+        result3 = self.ma100._check_manual_closes() or {"synced": 0, "positions": 0}
         return {
-            "synced": result1.get("synced", 0) + result2.get("synced", 0),
-            "positions": result1.get("positions", 0) + result2.get("positions", 0)
+            "synced": result1.get("synced", 0) + result2.get("synced", 0) + result3.get("synced", 0),
+            "positions": result1.get("positions", 0) + result2.get("positions", 0) + result3.get("positions", 0)
         }
 
     def _record_balance(self):
@@ -276,8 +313,29 @@ class UnifiedTrader:
             logger.info("[미러숏] 5분 대기...")
             await asyncio.sleep(300)
 
+    async def _ma100_loop(self):
+        """MA100 루프 (하루 1회, 일봉 갱신 시마다)"""
+        while True:
+            if self.ma100.running:
+                try:
+                    self.ma100.run_once()
+
+                    # 잔고 기록
+                    self._record_balance()
+
+                except Exception as e:
+                    logger.error(f"[MA100] 루프 오류: {e}")
+                    self.notifier.send_sync(f"⚠️ MA100 오류: {e}")
+
+            # 다음 일봉 캔들까지 대기
+            next_candle = self.ma100.data_fetcher.get_next_candle_time("1d")
+            now = datetime.utcnow()
+            sleep_seconds = max(60, (next_candle - now).total_seconds())
+            logger.info(f"[MA100] 다음 일봉까지 {sleep_seconds/3600:.1f}시간 대기")
+            await asyncio.sleep(sleep_seconds)
+
     async def run_async(self):
-        """두 전략을 하나의 asyncio 루프에서 실행"""
+        """세 전략을 하나의 asyncio 루프에서 실행"""
         mode = "PAPER" if self.paper else "LIVE"
         logger.info(f"통합 봇 시작 [{mode}]")
 
@@ -288,18 +346,21 @@ class UnifiedTrader:
         self.notifier.send_sync(
             f"🚀 <b>통합 봇 시작</b> [{mode}]\n\n"
             f"⛩️ 이치모쿠: 4시간봉 SHORT (20x)\n"
-            f"📉 미러숏: 5분봉 SHORT (5x)"
+            f"📉 미러숏: 5분봉 SHORT (5x)\n"
+            f"📊 MA100: 일봉 LONG+SHORT (5x)"
         )
 
         self.ichimoku.running = True
         self.surge.running = True
+        self.ma100.running = True
 
-        # 두 전략을 별도 asyncio Task로 실행
+        # 세 전략을 별도 asyncio Task로 실행
         ichimoku_task = asyncio.create_task(self._ichimoku_loop())
         surge_task = asyncio.create_task(self._surge_loop())
+        ma100_task = asyncio.create_task(self._ma100_loop())
 
         try:
-            await asyncio.gather(ichimoku_task, surge_task)
+            await asyncio.gather(ichimoku_task, surge_task, ma100_task)
         except asyncio.CancelledError:
             logger.info("통합 봇 종료")
         finally:
@@ -312,7 +373,7 @@ class UnifiedTrader:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="통합 봇 - 이치모쿠 + 미러숏 전략 동시 실행"
+        description="통합 봇 - 이치모쿠 + 미러숏 + MA100 전략 동시 실행"
     )
     parser.add_argument(
         "--paper", action="store_true",
@@ -334,10 +395,14 @@ def main():
         "--surge-max-positions", type=int, default=3,
         help="미러숏 최대 동시 포지션 수 (기본: 3개)"
     )
+    parser.add_argument(
+        "--ma100-max-positions", type=int, default=5,
+        help="MA100 최대 동시 포지션 수 (기본: 5개)"
+    )
     args = parser.parse_args()
 
     logger.info("=" * 60)
-    logger.info("통합 봇 - 이치모쿠 + 미러숏 전략")
+    logger.info("통합 봇 - 이치모쿠 + 미러숏 + MA100 전략")
     logger.info("=" * 60)
 
     mode = "PAPER" if args.paper else "LIVE"
@@ -350,7 +415,8 @@ def main():
             testnet=args.testnet,
             initial_balance=args.initial,
             daily_loss_limit_pct=args.loss_limit,
-            surge_max_positions=args.surge_max_positions
+            surge_max_positions=args.surge_max_positions,
+            ma100_max_positions=args.ma100_max_positions
         )
         trader.run()
 
