@@ -471,6 +471,50 @@ class BybitClient:
             logger.error(f"트레일링 스톱 설정 실패: {e}")
             return False
 
+    def _fetch_closed_pnl_chunked(self, days: int, limit_per_page: int = 100) -> list:
+        """7일 단위 청크로 closedPnl 조회 (바이빗 API 7일 제한 우회)"""
+        import time as _time
+
+        all_records = []
+        now_ms = int(_time.time() * 1000)
+        chunk_ms = 7 * 24 * 60 * 60 * 1000  # 7일
+        total_ms = days * 24 * 60 * 60 * 1000
+
+        chunk_end = now_ms
+        chunk_start = max(now_ms - chunk_ms, now_ms - total_ms)
+        earliest = now_ms - total_ms
+
+        while chunk_end > earliest:
+            params = {
+                'category': 'linear',
+                'limit': limit_per_page,
+                'startTime': chunk_start,
+                'endTime': chunk_end,
+            }
+
+            cursor = None
+            for _ in range(10):
+                if cursor:
+                    params['cursor'] = cursor
+
+                response = self.exchange.privateGetV5PositionClosedPnl(params)
+                if response and response.get('result'):
+                    records = response['result'].get('list', [])
+                    all_records.extend(records)
+                    cursor = response['result'].get('nextPageCursor')
+                    if not cursor or not records:
+                        break
+                else:
+                    break
+
+            # 다음 7일 청크
+            chunk_end = chunk_start
+            chunk_start = max(chunk_end - chunk_ms, earliest)
+            if chunk_end <= earliest:
+                break
+
+        return all_records
+
     def get_account_stats(self, days: int = 30) -> dict:
         """계정 거래 통계 조회
 
@@ -481,38 +525,7 @@ class BybitClient:
             {total_pnl, win_count, loss_count, win_rate, ...}
         """
         try:
-            import time
-
-            # 기간 설정
-            end_time = int(time.time() * 1000)
-            start_time = end_time - (days * 24 * 60 * 60 * 1000)
-
-            params = {
-                'category': 'linear',
-                'limit': 100,
-                'startTime': start_time,
-                'endTime': end_time,
-            }
-
-            all_records = []
-            cursor = None
-
-            # 페이지네이션으로 모든 기록 조회
-            for _ in range(10):  # 최대 1000건
-                if cursor:
-                    params['cursor'] = cursor
-
-                response = self.exchange.privateGetV5PositionClosedPnl(params)
-
-                if response and response.get('result'):
-                    records = response['result'].get('list', [])
-                    all_records.extend(records)
-
-                    cursor = response['result'].get('nextPageCursor')
-                    if not cursor or not records:
-                        break
-                else:
-                    break
+            all_records = self._fetch_closed_pnl_chunked(days)
 
             # 통계 계산
             total_pnl = 0
@@ -580,24 +593,12 @@ class BybitClient:
             거래 이력 리스트
         """
         try:
-            import time
             from datetime import datetime
 
-            end_time = int(time.time() * 1000)
-            start_time = end_time - (days * 24 * 60 * 60 * 1000)
-
-            params = {
-                'category': 'linear',
-                'limit': min(limit, 100),
-                'startTime': start_time,
-                'endTime': end_time,
-            }
-
-            response = self.exchange.privateGetV5PositionClosedPnl(params)
+            all_items = self._fetch_closed_pnl_chunked(days)
 
             result = []
-            if response and response.get('result') and response['result'].get('list'):
-                for item in response['result']['list']:
+            for item in all_items:
                     raw_symbol = item.get('symbol', '')
                     if raw_symbol.endswith('USDT'):
                         symbol = raw_symbol[:-4] + '/USDT:USDT'
