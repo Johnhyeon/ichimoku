@@ -433,6 +433,44 @@ class BybitClient:
             logger.error(f"SL/TP 수정 실패: {e}")
             return False
 
+    def set_trailing_stop(self, symbol: str, trailing_stop: float, active_price: float = None) -> bool:
+        """포지션에 트레일링 스톱 설정 (거래소 레벨)
+
+        Args:
+            symbol: 심볼 (예: "BTC/USDT:USDT")
+            trailing_stop: 트레일링 가격 거리 (0이면 취소)
+            active_price: 트레일링 활성화 가격 (None이면 즉시 활성)
+
+        Returns:
+            성공 여부
+        """
+        try:
+            bybit_symbol = symbol.replace('/USDT:USDT', 'USDT')
+
+            params = {
+                'category': 'linear',
+                'symbol': bybit_symbol,
+                'positionIdx': 0,
+                'trailingStop': str(trailing_stop),
+            }
+
+            if active_price is not None:
+                params['activePrice'] = str(active_price)
+
+            response = self.exchange.privatePostV5PositionTradingStop(params)
+
+            if response and response.get('retCode') == 0:
+                ap_str = f", 활성화가=${active_price:.4f}" if active_price else ""
+                logger.info(f"트레일링 스톱 설정: {symbol} | 거리=${trailing_stop:.4f}{ap_str}")
+                return True
+            else:
+                logger.error(f"트레일링 스톱 설정 실패: {response}")
+                return False
+
+        except Exception as e:
+            logger.error(f"트레일링 스톱 설정 실패: {e}")
+            return False
+
     def get_account_stats(self, days: int = 30) -> dict:
         """계정 거래 통계 조회
 

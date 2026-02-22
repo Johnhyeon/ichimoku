@@ -346,6 +346,18 @@ class MA100Trader:
                 self.notifier.notify_error(f"MA100 진입 실패: {symbol}\n{e}")
                 return 0.0
 
+            # 거래소 레벨 트레일링 스톱 설정
+            try:
+                trail_dist = price * self.params['trail_pct'] / 100
+                if side == "long":
+                    active_price = price * (1 + self.params['trail_start_pct'] / 100)
+                else:
+                    active_price = price * (1 - self.params['trail_start_pct'] / 100)
+
+                self.client.set_trailing_stop(symbol, trail_dist, active_price)
+            except Exception as e:
+                logger.warning(f"MA100 트레일링 스톱 설정 실패 (봇 체크로 대체): {e}")
+
         # 포지션 상태 업데이트
         self.positions[symbol] = {
             "symbol": symbol,
@@ -380,7 +392,7 @@ class MA100Trader:
             f"MA100: ${ma100_val:.4f}\n"
             f"기울기: {slope:.3f}%\n\n"
             f"손절: ${stop_loss:.4f} ({self.params['sl_pct']}%)\n"
-            f"트레일링: {self.params['trail_start_pct']}% 수익 시 활성화"
+            f"트레일링: {self.params['trail_start_pct']}% 수익 시 활성화 → {self.params['trail_pct']}% 되돌림 청산 (거래소)"
         )
         self.notifier.send_sync(message)
 
@@ -451,6 +463,36 @@ class MA100Trader:
         self.positions.pop(symbol, None)
         self.last_exit_times[symbol] = datetime.utcnow()
         self._save_state()
+
+    def _ensure_trailing_stop(self, symbol: str):
+        """거래소에 트레일링 스톱이 없으면 설정"""
+        if self.paper:
+            return
+
+        pos = self.positions.get(symbol)
+        if not pos:
+            return
+
+        try:
+            sl_tp = self.client.get_position_sl_tp(symbol)
+            if float(sl_tp.get('trailing_stop', 0)) > 0:
+                return  # 이미 설정됨
+
+            entry_price = float(pos['entry_price'])
+            side = pos['side']
+            trail_dist = entry_price * self.params['trail_pct'] / 100
+
+            if side == "long":
+                active_price = entry_price * (1 + self.params['trail_start_pct'] / 100)
+            else:
+                active_price = entry_price * (1 - self.params['trail_start_pct'] / 100)
+
+            self.client.set_trailing_stop(symbol, trail_dist, active_price)
+            short_sym = symbol.split('/')[0]
+            logger.info(f"[MA100] {short_sym} 트레일링 스톱 보완 설정 완료")
+
+        except Exception as e:
+            logger.warning(f"[MA100] {symbol} 트레일링 스톱 보완 실패: {e}")
 
     def _check_exit_signals(self, symbol: str, df: pd.DataFrame):
         """청산 신호 체크 (SL, 시그널 반전, 트레일링)"""
@@ -690,8 +732,9 @@ class MA100Trader:
         # 수동 청산 감지
         self._check_manual_closes()
 
-        # 기존 포지션 exit 체크
+        # 기존 포지션: 트레일링 스톱 보완 + exit 체크
         for symbol in list(self.positions.keys()):
+            self._ensure_trailing_stop(symbol)
             df = self._get_1d_data(symbol, limit=150)
             if df is not None:
                 self._check_exit_signals(symbol, df)
