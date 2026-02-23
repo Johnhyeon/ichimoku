@@ -775,7 +775,7 @@ class MA100Trader:
         # 전체 USDT 무기한 선물 스캔
         logger.info("[MA100 SCAN] 일봉 MA100 스캔 시작...")
 
-        STABLECOINS = {'USDC', 'USDT', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDE', 'USDD', 'USDJ', 'EUR'}
+        STABLECOINS = {'USDC', 'USDT', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDE', 'USDD', 'USDJ', 'USD1', 'RLUSD', 'EUR'}
 
         try:
             markets = self.client.exchange.fetch_markets()
