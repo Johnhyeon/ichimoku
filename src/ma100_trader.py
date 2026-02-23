@@ -775,7 +775,17 @@ class MA100Trader:
         # 전체 USDT 무기한 선물 스캔
         logger.info("[MA100 SCAN] 일봉 MA100 스캔 시작...")
 
-        STABLECOINS = {'USDC', 'USDT', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDE', 'USDD', 'USDJ', 'USD1', 'RLUSD', 'EUR'}
+        # 스테이블코인 + 금 페그 토큰 제외 (Bybit 무기한 선물 기준)
+        STABLECOINS = {
+            # USD 페그
+            'USDC', 'USDT', 'USDE', 'USTC', 'RLUSD', 'USD1',
+            'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDD', 'USDJ',
+            'FRAX', 'LUSD', 'GHO', 'MIM', 'SUSD', 'GUSD', 'DOLA', 'USDS',
+            # 금 페그
+            'XAUT', 'PAXG',
+            # EUR 페그
+            'EUR', 'EURC', 'EURS', 'EURT',
+        }
 
         try:
             markets = self.client.exchange.fetch_markets()
