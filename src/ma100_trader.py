@@ -32,8 +32,8 @@ MA100_PARAMS = {
     'slope_lookback': 3,
     'touch_buffer_pct': 1.0,
     'leverage': 5,
-    'position_pct': 0.05,
-    'max_positions': 5,
+    'position_pct': 0.02,
+    'max_positions': 20,
     'max_margin': 500,
     'sl_pct': 5.0,
     'trail_start_pct': 3.0,
@@ -300,13 +300,13 @@ class MA100Trader:
 
     # ==================== 포지션 관리 ====================
 
-    def _calc_order_quantity(self, price: float, free_balance: float) -> float:
-        """주문 수량 계산"""
-        if free_balance <= 0:
+    def _calc_order_quantity(self, price: float, total_balance: float) -> float:
+        """주문 수량 계산 (total 잔고 기준)"""
+        if total_balance <= 0:
             return 0.0
 
         margin = min(
-            free_balance * self.params['position_pct'],
+            total_balance * self.params['position_pct'],
             self.params['max_margin']
         )
         position_value = margin * self.params['leverage']
@@ -680,6 +680,15 @@ class MA100Trader:
             logger.error(f"잔고 조회 실패: {e}")
             return 0.0
 
+    def _get_balance_total(self) -> float:
+        """USDT 전체 잔고 (포지션 비율 계산용)"""
+        try:
+            balance = self.client.get_balance()
+            return float(balance.get("total", 0))
+        except Exception as e:
+            logger.error(f"잔고 조회 실패: {e}")
+            return 0.0
+
     def _get_positions_list(self) -> list:
         """현재 포지션 목록 (실시간 PnL 포함)"""
         if not self.positions:
@@ -753,14 +762,14 @@ class MA100Trader:
             logger.info(f"[MA100 WAIT] 최대 포지션 수 도달 ({self.max_positions}개)")
             return
 
-        # 잔고 확인
+        # 잔고 확인 (total 기준으로 포지션 비율 계산)
         try:
-            free_balance = self._get_balance_free()
+            total_balance = self._get_balance_total()
         except Exception:
-            free_balance = 0.0
+            total_balance = 0.0
 
-        if free_balance <= 0:
-            logger.warning("[MA100 WAIT] 사용 가능 잔고 없음")
+        if total_balance <= 0:
+            logger.warning("[MA100 WAIT] 잔고 없음")
             return
 
         # 전체 USDT 무기한 선물 스캔
@@ -828,11 +837,11 @@ class MA100Trader:
             if len(self.positions) >= self.max_positions:
                 break
 
-            used_margin = self._open_position(signal, free_balance)
+            used_margin = self._open_position(signal, total_balance)
             if used_margin > 0:
-                free_balance -= used_margin
+                total_balance -= used_margin
 
-            if free_balance <= 0:
+            if total_balance <= 0:
                 break
 
     def stop(self):

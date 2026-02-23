@@ -53,7 +53,7 @@ class UnifiedTrader:
         initial_balance: float = 1000.0,
         daily_loss_limit_pct: float = 20.0,
         surge_max_positions: int = 3,
-        ma100_max_positions: int = 5
+        ma100_max_positions: int = 20
     ):
         self.paper = paper
         self.testnet = testnet
@@ -420,8 +420,8 @@ def main():
         help="미러숏 최대 동시 포지션 수 (기본: 3개)"
     )
     parser.add_argument(
-        "--ma100-max-positions", type=int, default=5,
-        help="MA100 최대 동시 포지션 수 (기본: 5개)"
+        "--ma100-max-positions", type=int, default=20,
+        help="MA100 최대 동시 포지션 수 (기본: 20개)"
     )
     args = parser.parse_args()
 
