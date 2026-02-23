@@ -775,6 +775,8 @@ class MA100Trader:
         # 전체 USDT 무기한 선물 스캔
         logger.info("[MA100 SCAN] 일봉 MA100 스캔 시작...")
 
+        STABLECOINS = {'USDC', 'USDT', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDE', 'USDD', 'USDJ', 'EUR'}
+
         try:
             markets = self.client.exchange.fetch_markets()
             usdt_perps = [
@@ -782,6 +784,7 @@ class MA100Trader:
                 if m.get('settle') == 'USDT'
                 and m.get('type') == 'swap'
                 and m.get('active', True)
+                and m.get('base') not in STABLECOINS
             ]
             logger.info(f"MA100 스캔 대상: {len(usdt_perps)}개 코인")
         except Exception:
