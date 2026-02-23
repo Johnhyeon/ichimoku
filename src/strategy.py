@@ -11,6 +11,17 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# 스테이블코인 + 페그 토큰 제외 목록 (전체 스캔 시 공용)
+STABLECOINS = {
+    # USD 페그
+    'USDC', 'USDT', 'USDE', 'USTC', 'RLUSD', 'USD1',
+    'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDD', 'USDJ',
+    'FRAX', 'LUSD', 'GHO', 'MIM', 'SUSD', 'GUSD', 'DOLA', 'USDS',
+    # 금 페그
+    'XAUT', 'PAXG',
+    # EUR 페그
+    'EUR', 'EURC', 'EURS', 'EURT',
+}
 
 # 전략 파라미터 (숏 전용)
 LEVERAGE = 20

@@ -27,7 +27,7 @@ from src.bybit_client import BybitClient
 from src.data_fetcher import DataFetcher
 from src.live_surge_mirror_short import MirrorShortParams, overheat_confirmed
 from src.telegram_bot import TelegramNotifier, TelegramBot
-from src.strategy import MAJOR_COINS
+from src.strategy import MAJOR_COINS, STABLECOINS
 
 logger = logging.getLogger(__name__)
 
@@ -787,6 +787,7 @@ class SurgeTrader:
                 if m.get('settle') == 'USDT'
                 and m.get('type') == 'swap'
                 and m.get('active', True)
+                and m.get('base') not in STABLECOINS
             ]
             logger.info(f"스캔 대상: {len(usdt_perps)}개 코인")
         except:

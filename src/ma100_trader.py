@@ -23,6 +23,7 @@ import pandas as pd
 
 from src.bybit_client import BybitClient
 from src.data_fetcher import DataFetcher
+from src.strategy import STABLECOINS
 from src.telegram_bot import TelegramNotifier, TelegramBot
 
 logger = logging.getLogger(__name__)
@@ -774,18 +775,6 @@ class MA100Trader:
 
         # 전체 USDT 무기한 선물 스캔
         logger.info("[MA100 SCAN] 일봉 MA100 스캔 시작...")
-
-        # 스테이블코인 + 금 페그 토큰 제외 (Bybit 무기한 선물 기준)
-        STABLECOINS = {
-            # USD 페그
-            'USDC', 'USDT', 'USDE', 'USTC', 'RLUSD', 'USD1',
-            'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDD', 'USDJ',
-            'FRAX', 'LUSD', 'GHO', 'MIM', 'SUSD', 'GUSD', 'DOLA', 'USDS',
-            # 금 페그
-            'XAUT', 'PAXG',
-            # EUR 페그
-            'EUR', 'EURC', 'EURS', 'EURT',
-        }
 
         try:
             markets = self.client.exchange.fetch_markets()
