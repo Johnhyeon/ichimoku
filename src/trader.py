@@ -801,11 +801,92 @@ class IchimokuTrader:
         except Exception as e:
             logger.error(f"시황 리포트 전송 실패: {e}")
 
+    def _ensure_exchange_trailing(self):
+        """목표가 50% 이상 도달 시 거래소 레벨 트레일링 스톱 설정"""
+        if self.paper or not self.positions:
+            return
+
+        params = STRATEGY_PARAMS
+        trail_pct = params.get("trail_pct", 1.5)
+
+        try:
+            exchange_positions = self.client.get_all_positions()
+            pos_map = {p["symbol"]: p for p in exchange_positions}
+        except Exception as e:
+            logger.error(f"트레일링 체크용 포지션 조회 실패: {e}")
+            return
+
+        for symbol, pos in list(self.positions.items()):
+            # 이미 거래소 트레일링 설정됨
+            if pos.get("exchange_trailing_set"):
+                continue
+
+            entry = float(pos.get("entry_price", 0))
+            tp = float(pos.get("take_profit", 0))
+            side = pos.get("side", "short")
+
+            if entry <= 0 or tp <= 0:
+                continue
+
+            # 거래소에서 현재가 조회
+            ex_pos = pos_map.get(symbol)
+            if not ex_pos:
+                continue
+            current_price = float(ex_pos.get("mark_price", 0))
+            if current_price <= 0:
+                continue
+
+            # 목표까지의 전체 거리와 50% 지점 계산
+            target_distance = abs(entry - tp)
+            half_target = target_distance * 0.5
+
+            # 50% 도달 여부 체크
+            reached_half = False
+            if side == "short":
+                # 숏: 가격이 entry보다 half_target 이상 내려갔으면
+                reached_half = current_price <= entry - half_target
+                active_price = entry - half_target  # 활성화 가격
+            else:
+                # 롱: 가격이 entry보다 half_target 이상 올라갔으면
+                reached_half = current_price >= entry + half_target
+                active_price = entry + half_target
+
+            if not reached_half:
+                continue
+
+            # 트레일링 스톱 거리 계산
+            trail_dist = round(current_price * trail_pct / 100, 2)
+
+            short_sym = symbol.split('/')[0]
+            logger.info(f"[TRAILING] {short_sym} 목표가 50%+ 도달 → 거래소 트레일링 설정 (거리: ${trail_dist:.2f})")
+
+            try:
+                success = self.client.set_trailing_stop(
+                    symbol,
+                    trailing_stop=trail_dist,
+                    active_price=active_price
+                )
+                if success:
+                    pos["exchange_trailing_set"] = True
+                    self._save_state()
+
+                    pnl_pct = abs(current_price - entry) / entry * 100 * self.leverage
+                    self.notifier.send_sync(
+                        f"⛩️ <b>{short_sym} 트레일링 스톱 설정</b>\n"
+                        f"현재 수익: {pnl_pct:+.1f}%\n"
+                        f"트레일링 거리: ${trail_dist:.2f} ({trail_pct}%)\n"
+                        f"활성화 가격: ${active_price:,.2f}"
+                    )
+                    logger.info(f"[TRAILING] {short_sym} 거래소 트레일링 설정 완료")
+            except Exception as e:
+                logger.error(f"[TRAILING] {short_sym} 거래소 트레일링 설정 실패: {e}")
+
     def check_positions(self):
-        """포지션 상태만 체크 (수동/거래소 청산 감지). 자주 호출용."""
+        """포지션 상태만 체크 (수동/거래소 청산 감지 + 트레일링). 자주 호출용."""
         if not self.positions:
             return
         self._check_manual_closes()
+        self._ensure_exchange_trailing()
 
     def run_once(self):
         """한 번 스캔 및 실행"""
