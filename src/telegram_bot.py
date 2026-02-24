@@ -753,9 +753,14 @@ class TelegramBot:
             await self._show_balance(query)
             return
 
-        # 잔고 차트
+        # 잔고 차트 (7일)
         if data == "balance_chart":
-            await self._show_balance_chart(query)
+            await self._show_balance_chart(query, days=7)
+            return
+
+        # 잔고 차트 (전체)
+        if data == "balance_chart_all":
+            await self._show_balance_chart(query, days=365)
             return
 
         # 포지션 상세
@@ -989,7 +994,10 @@ class TelegramBot:
     def _get_balance_keyboard(self) -> InlineKeyboardMarkup:
         """잔고 상세 화면 키보드"""
         keyboard = [
-            [InlineKeyboardButton("📈 잔고 추이", callback_data="balance_chart")],
+            [
+                InlineKeyboardButton("📈 최근 7일", callback_data="balance_chart"),
+                InlineKeyboardButton("📊 전체 추이", callback_data="balance_chart_all"),
+            ],
             [InlineKeyboardButton("← 뒤로", callback_data="back_main")],
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -1026,25 +1034,26 @@ class TelegramBot:
         except Exception as e:
             await self._safe_edit_message(query, f"❌ 조회 실패: {e}", self._get_back_keyboard())
 
-    async def _show_balance_chart(self, query):
+    async def _show_balance_chart(self, query, days: int = 7):
         """잔고 추이 차트 표시"""
-        await self._safe_edit_message(query, "📈 잔고 추이 차트 생성 중...")
+        label = "전체" if days > 30 else f"최근 {days}일"
+        await self._safe_edit_message(query, f"📈 잔고 추이 차트 생성 중... ({label})")
 
         if not self.get_balance_chart_callback:
             await self._safe_edit_message(query, "❌ 잔고 차트 기능 사용 불가", self._get_balance_keyboard())
             return
 
         try:
-            chart_bytes = await self.get_balance_chart_callback()
+            chart_bytes = await self.get_balance_chart_callback(days=days)
             if chart_bytes:
                 await self.notifier.send_photo(
                     chart_bytes,
-                    caption="📈 잔고 추이 (최근 7일)",
+                    caption=f"📈 잔고 추이 ({label})",
                     reply_markup=self._get_back_keyboard()
                 )
                 await self._safe_edit_message(
                     query,
-                    "📈 <b>잔고 추이</b>\n\n차트가 전송되었습니다.",
+                    f"📈 <b>잔고 추이 ({label})</b>\n\n차트가 전송되었습니다.",
                     self._get_balance_keyboard()
                 )
             else:

@@ -13,7 +13,6 @@ class BalanceTracker:
     """잔고 스냅샷을 기록하고 조회하는 트래커"""
 
     FILE = "data/balance_history.json"
-    MAX_DAYS = 30
     MIN_INTERVAL_SEC = 300  # 5분
 
     def __init__(self):
@@ -68,11 +67,6 @@ class BalanceTracker:
             "unrealized_pnl": unrealized_pnl,
         }
         self._history.append(snapshot)
-
-        # 30일 지난 데이터 정리
-        cutoff = (now - timedelta(days=self.MAX_DAYS)).isoformat()
-        self._history = [h for h in self._history if h["timestamp"] >= cutoff]
-
         self._save()
 
     def get_history(self, days: int = 7) -> list:

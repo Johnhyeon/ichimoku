@@ -267,9 +267,9 @@ class UnifiedTrader:
         except Exception as e:
             logger.debug(f"잔고 기록 실패 (무시): {e}")
 
-    async def _get_balance_chart(self) -> bytes:
+    async def _get_balance_chart(self, days: int = 7) -> bytes:
         """잔고 추이 차트 생성"""
-        history = self.balance_tracker.get_history(days=7)
+        history = self.balance_tracker.get_history(days=days)
         return self.chart_generator.generate_balance_chart(history)
 
     async def _ichimoku_loop(self):
