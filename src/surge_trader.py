@@ -595,6 +595,16 @@ class SurgeTrader:
                 self.notifier.notify_error(f"진입 실패: {symbol}\n{e}")
                 return 0.0
 
+        # 거래소 레벨 트레일링 스톱 설정 (숏: 가격 하락 3% 시 활성, 1.2% 반등 시 청산)
+        if not self.paper:
+            try:
+                trail_dist = round(price * self.params['trail_rebound_pct'] / 100, 4)
+                active_price = price * (1 - self.params['trail_start_pct'] / 100)
+                self.client.set_trailing_stop(symbol, trail_dist, active_price)
+                logger.info(f"[TRAILING] {symbol} 거래소 트레일링 설정 (거리: ${trail_dist}, 활성화: ${active_price:.4f})")
+            except Exception as e:
+                logger.warning(f"[TRAILING] {symbol} 거래소 트레일링 설정 실패 (봇 체크로 대체): {e}")
+
         # 포지션 상태 업데이트
         self.positions[symbol] = {
             "symbol": symbol,
@@ -626,7 +636,7 @@ class SurgeTrader:
             f"거래량: {vol_ratio:.1f}배\n"
             f"가격 상승: +{price_change:.1f}%\n\n"
             f"손절: ${stop_loss:.4f} (+{self.params['sl_pct']}%)\n"
-            f"트레일링: {self.params['trail_start_pct']}% 하락 시 활성화"
+            f"트레일링: {self.params['trail_start_pct']}% 하락 시 활성화 → {self.params['trail_rebound_pct']}% 반등 청산 (거래소)"
         )
         self.notifier.send_sync(message)
 
