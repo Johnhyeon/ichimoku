@@ -5,7 +5,7 @@
 하나의 프로세스에서 세 전략을 함께 실행합니다:
   - 이치모쿠: 4시간봉 기반 SHORT 전략 (레버리지 20x)
   - 미러숏: 5분봉 기반 SHORT 전략 (레버리지 5x)
-  - MA100: 일봉 기반 LONG+SHORT 전략 (레버리지 5x)
+  - MA100: 일봉 기반 SHORT ONLY 전략 (레버리지 5x)
 
 텔레그램 봇 1개로 통합 관리하므로 409 Conflict 없이 동작합니다.
 
@@ -365,7 +365,7 @@ class UnifiedTrader:
             f"🚀 <b>통합 봇 시작</b> [{mode}]\n\n"
             f"⛩️ 이치모쿠: 4시간봉 SHORT (20x)\n"
             f"📉 미러숏: 5분봉 SHORT (5x)\n"
-            f"📊 MA100: 일봉 LONG+SHORT (5x)"
+            f"📊 MA100: 일봉 SHORT ONLY (5x)"
         )
 
         self.ichimoku.running = True

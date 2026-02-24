@@ -1,13 +1,12 @@
 """
-MA100 터치 반등 전략 실시간 트레이더
+MA100 터치 거부 전략 실시간 트레이더 (SHORT ONLY)
 
-일봉 MA100 터치 후 반등/거부 시그널로 롱/숏 진입하는 전략입니다.
-백테스트: 2년간 PnL +$99K (3전략 통합), PF 1.69.
+일봉 MA100 하향 기울기에서 터치 거부 시그널로 숏 진입하는 전략입니다.
+백테스트: 1D 숏온리 609일간 +1001%, PF 1.45, 승률 55.6%.
 
 주요 특징:
-  - 일봉 MA100 터치 감지 (상승 추세 롱, 하락 추세 숏)
+  - 일봉 MA100 터치 감지 (하락 추세 숏만 진입)
   - 트레일링 스톱으로 수익 보호
-  - 시그널 반전 시 포지션 청산
   - 텔레그램 실시간 알림
 
 실행 예시:
@@ -265,14 +264,8 @@ class MA100Trader:
 
         side = None
 
-        # LONG: slope > 0, low <= ma100*(1+buf), close > ma100
-        if (slope_val > 0
-                and low_val <= ma100_val * (1 + touch_buf)
-                and close_val > ma100_val):
-            side = "long"
-
-        # SHORT: slope < 0, high >= ma100*(1-buf), close < ma100
-        elif (slope_val < 0
+        # SHORT ONLY: slope < 0, high >= ma100*(1-buf), close < ma100
+        if (slope_val < 0
               and high_val >= ma100_val * (1 - touch_buf)
               and close_val < ma100_val):
             side = "short"
