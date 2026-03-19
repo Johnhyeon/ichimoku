@@ -40,6 +40,9 @@ MA100_PARAMS = {
     'trail_pct': 2.0,
     'cooldown_days': 3,
     'fee_rate': 0.00055,
+    # ── 분할매수 (DCA) ──
+    'dca_ratios': [1, 1, 2],    # 분할매수 비율 (1차:2차:3차 = 1:1:2)
+    'dca_interval_pct': 4.0,    # 분할매수 간격 (%) - 숏: 진입가 위로
 }
 
 
@@ -309,18 +312,36 @@ class MA100Trader:
         return qty
 
     def _open_position(self, signal: dict, free_balance: float) -> float:
-        """포지션 오픈"""
+        """포지션 오픈 (DCA 1차 진입)"""
         symbol = signal["symbol"]
         side = signal["side"]
         price = signal["price"]
         stop_loss = signal["stop_loss"]
 
-        qty = self._calc_order_quantity(price, free_balance)
-        if qty <= 0:
+        # DCA 분할매수 설정
+        dca_ratios = self.params.get('dca_ratios', [1])
+        dca_interval = self.params.get('dca_interval_pct', 2.0)
+        total_ratio = sum(dca_ratios)
+
+        total_qty = self._calc_order_quantity(price, free_balance)
+        if total_qty <= 0:
             logger.warning("MA100 주문 수량이 0 이하입니다.")
             return 0.0
 
-        logger.info(f"[MA100 ENTRY] {symbol} {side.upper()} | Price=${price:.4f}, Qty={qty}, SL=${stop_loss:.4f}")
+        tranche_sizes = [round(total_qty * r / total_ratio, 3) for r in dca_ratios]
+        first_qty = tranche_sizes[0]
+
+        # DCA 대기 주문 정보 생성
+        pending_dca = []
+        for i in range(1, len(dca_ratios)):
+            if side == "short":
+                dca_price = price * (1 + i * dca_interval / 100)
+            else:
+                dca_price = price * (1 - i * dca_interval / 100)
+            pending_dca.append({"price": dca_price, "size": tranche_sizes[i]})
+
+        dca_desc = ":".join(str(r) for r in dca_ratios)
+        logger.info(f"[MA100 ENTRY] {symbol} {side.upper()} | Price=${price:.4f}, Qty={first_qty}/{total_qty} (DCA {dca_desc}), SL=${stop_loss:.4f}")
 
         if not self.paper:
             try:
@@ -331,7 +352,7 @@ class MA100Trader:
             try:
                 order_side = "buy" if side == "long" else "sell"
                 self.client.market_order_with_sl_tp(
-                    symbol, order_side, qty,
+                    symbol, order_side, first_qty,
                     stop_loss=stop_loss,
                     take_profit=None
                 )
@@ -364,9 +385,11 @@ class MA100Trader:
             "lowest": price,
             "trail_stop": None,
             "trailing": False,
-            "size": qty,
+            "size": first_qty,
             "strategy": "ma100",
             "leverage": self.params['leverage'],
+            "pending_dca": pending_dca,
+            "filled_entries": [{"price": price, "size": first_qty}],
         }
 
         # 텔레그램 알림
@@ -376,23 +399,31 @@ class MA100Trader:
         short_sym = symbol.split('/')[0]
         side_emoji = "📈" if side == "long" else "📉"
 
+        dca_info = ""
+        if len(dca_ratios) > 1:
+            dca_info = f"\n\n📊 분할매수 ({dca_desc})\n"
+            dca_info += f"1차: {first_qty} @ ${price:.4f}\n"
+            for j, dca in enumerate(pending_dca):
+                dca_info += f"{j+2}차: {dca['size']} @ ${dca['price']:.4f} (대기)\n"
+
         message = (
             f"{side_emoji} <b>MA100 진입: {short_sym}</b>\n\n"
             f"방향: {side.upper()}\n"
             f"진입가: ${price:.4f}\n"
-            f"수량: {qty}\n"
+            f"수량: {first_qty} (전체 {total_qty})\n"
             f"레버리지: {self.params['leverage']}x\n\n"
             f"📊 시그널 정보\n"
             f"MA100: ${ma100_val:.4f}\n"
             f"기울기: {slope:.3f}%\n\n"
             f"손절: ${stop_loss:.4f} ({self.params['sl_pct']}%)\n"
             f"트레일링: {self.params['trail_start_pct']}% 수익 시 활성화 → {self.params['trail_pct']}% 되돌림 청산 (거래소)"
+            f"{dca_info}"
         )
         self.notifier.send_sync(message)
 
         self._save_state()
 
-        used_margin = (price * qty) / self.params['leverage']
+        used_margin = (price * first_qty) / self.params['leverage']
         return used_margin
 
     def _close_position(self, symbol: str, exit_info: dict):
@@ -488,13 +519,102 @@ class MA100Trader:
         except Exception as e:
             logger.warning(f"[MA100] {symbol} 트레일링 스톱 보완 실패: {e}")
 
+    def _process_dca(self, symbol: str, current_price: float):
+        """현재가 기준 DCA 주문 체결 처리"""
+        pos = self.positions.get(symbol)
+        if not pos:
+            return
+
+        pending = pos.get("pending_dca")
+        if not pending:
+            return
+
+        side = pos["side"]
+        filled_new = []
+        remaining = []
+
+        for dca in pending:
+            if side == "short" and current_price >= dca["price"]:
+                filled_new.append(dca)
+            elif side == "long" and current_price <= dca["price"]:
+                filled_new.append(dca)
+            else:
+                remaining.append(dca)
+
+        if not filled_new:
+            return
+
+        short_sym = symbol.split('/')[0]
+
+        # 거래소에 추가 주문 실행
+        for dca in filled_new:
+            dca_qty = dca["size"]
+            dca_price = dca["price"]
+
+            logger.info(f"[MA100 DCA] {short_sym} 분할매수 체결 @ ${current_price:.4f} (계획가: ${dca_price:.4f}, 수량: {dca_qty})")
+
+            if not self.paper:
+                try:
+                    order_side = "buy" if side == "long" else "sell"
+                    self.client.market_order(symbol, order_side, dca_qty)
+                except Exception as e:
+                    logger.error(f"MA100 DCA 주문 실패 ({symbol}): {e}")
+                    remaining.append(dca)  # 실패하면 다시 대기열로
+                    continue
+
+            # 체결 기록
+            entries = pos.get("filled_entries", [])
+            entries.append({"price": current_price, "size": dca_qty})
+            pos["filled_entries"] = entries
+
+        # 평균단가 재계산
+        entries = pos["filled_entries"]
+        total_size = sum(e["size"] for e in entries)
+        avg_price = sum(e["price"] * e["size"] for e in entries) / total_size
+
+        old_entry = pos["entry_price"]
+        pos["entry_price"] = avg_price
+        pos["size"] = total_size
+        pos["pending_dca"] = remaining
+
+        # SL 재계산
+        if side == "long":
+            pos["stop_loss"] = avg_price * (1 - self.params['sl_pct'] / 100)
+        else:
+            pos["stop_loss"] = avg_price * (1 + self.params['sl_pct'] / 100)
+
+        # 거래소 SL 업데이트
+        if not self.paper:
+            try:
+                self.client.set_stop_loss(symbol, pos["stop_loss"])
+            except Exception as e:
+                logger.warning(f"MA100 SL 업데이트 실패: {e}")
+
+        # 텔레그램 알림
+        n_filled = len(entries)
+        n_total = n_filled + len(remaining)
+        self.notifier.send_sync(
+            f"📊 <b>MA100 분할매수: {short_sym}</b>\n\n"
+            f"체결: {n_filled}/{n_total}차\n"
+            f"평균단가: ${old_entry:.4f} → ${avg_price:.4f}\n"
+            f"총수량: {total_size}\n"
+            f"새 손절가: ${pos['stop_loss']:.4f}"
+        )
+
+        self._save_state()
+
     def _check_exit_signals(self, symbol: str, df: pd.DataFrame):
-        """청산 신호 체크 (SL, 시그널 반전, 트레일링)"""
+        """청산 신호 체크 (DCA → SL, 시그널 반전, 트레일링)"""
         pos = self.positions.get(symbol)
         if not pos:
             return
 
         current_price = float(df.iloc[-1]['close'])
+
+        # DCA 체결 먼저 처리
+        self._process_dca(symbol, current_price)
+
+        # DCA 후 업데이트된 값 사용
         entry_price = float(pos['entry_price'])
         stop_loss = float(pos['stop_loss'])
         side = pos['side']
