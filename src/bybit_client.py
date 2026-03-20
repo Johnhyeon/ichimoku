@@ -28,6 +28,13 @@ class BybitClient:
 
         logger.info(f"바이빗 클라이언트 초기화 완료 (테스트넷: {testnet})")
 
+    def amount_to_precision(self, symbol: str, amount: float) -> float:
+        """거래소 precision에 맞게 수량 조정"""
+        try:
+            return float(self.exchange.amount_to_precision(symbol, amount))
+        except Exception:
+            return amount
+
     def get_balance(self) -> dict:
         """USDT 잔고 조회"""
         try:

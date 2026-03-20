@@ -491,7 +491,6 @@ class SurgeTrader:
         margin = free_balance * self.params['position_pct']
         position_value = margin * self.params['leverage']
         qty = position_value / price
-        qty = round(qty, 3)
         return qty
 
     def _get_5m_data(self, symbol: str, limit: int = 100) -> Optional[pd.DataFrame]:

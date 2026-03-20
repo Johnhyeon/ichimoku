@@ -308,7 +308,6 @@ class MA100Trader:
         )
         position_value = margin * self.params['leverage']
         qty = position_value / price
-        qty = round(qty, 3)
         return qty
 
     def _open_position(self, signal: dict, free_balance: float) -> float:
@@ -328,7 +327,10 @@ class MA100Trader:
             logger.warning("MA100 주문 수량이 0 이하입니다.")
             return 0.0
 
-        tranche_sizes = [round(total_qty * r / total_ratio, 3) for r in dca_ratios]
+        tranche_sizes = [
+            self.client.amount_to_precision(symbol, total_qty * r / total_ratio)
+            for r in dca_ratios
+        ]
         first_qty = tranche_sizes[0]
 
         # DCA 대기 주문 정보 생성

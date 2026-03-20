@@ -466,7 +466,6 @@ class IchimokuTrader:
         margin = free_balance * self.position_pct
         position_value = margin * self.leverage
         qty = position_value / price
-        qty = round(qty, 3)
         return qty
 
     def _open_position(self, signal: dict, free_balance: float, df: pd.DataFrame = None) -> float:
