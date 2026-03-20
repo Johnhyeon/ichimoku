@@ -267,6 +267,73 @@ class BybitClient:
             logger.error(f"시세 조회 실패: {e}")
             raise
 
+    def spot_market_buy(self, symbol: str, amount_usdt: float) -> dict:
+        """스팟 시장가 매수
+
+        Args:
+            symbol: 스팟 심볼 (예: "BTC/USDT")
+            amount_usdt: 매수 금액 (USDT)
+
+        Returns:
+            주문 결과 dict
+        """
+        try:
+            order = self.exchange.create_order(
+                symbol=symbol,
+                type='market',
+                side='buy',
+                amount=amount_usdt,
+                params={'type': 'spot', 'createOrderType': 'spot'},
+            )
+            price = float(order.get('average') or order.get('price') or 0)
+            filled = float(order.get('filled') or order.get('amount') or 0)
+            cost = float(order.get('cost') or (price * filled) or amount_usdt)
+
+            logger.info(f"스팟 매수 체결: {symbol} ${amount_usdt:.2f} @ ${price:,.2f}")
+            return {
+                'id': order['id'],
+                'symbol': symbol,
+                'side': 'buy',
+                'amount': filled,
+                'price': price,
+                'cost': cost,
+                'status': order['status'],
+            }
+        except Exception as e:
+            logger.error(f"스팟 매수 실패: {e}")
+            raise
+
+    def get_spot_balance(self, coin: str = 'USDT') -> dict:
+        """스팟 계좌 잔고 조회
+
+        Args:
+            coin: 조회할 코인 (예: "BTC", "ETH", "USDT")
+
+        Returns:
+            {total, free, used}
+        """
+        try:
+            balance = self.exchange.fetch_balance(params={'type': 'spot'})
+
+            total = 0.0
+            free = 0.0
+            used = 0.0
+
+            if coin in balance:
+                total = float(balance[coin].get('total', 0) or 0)
+                free = float(balance[coin].get('free', 0) or 0)
+                used = float(balance[coin].get('used', 0) or 0)
+
+            if total == 0 and 'total' in balance and isinstance(balance['total'], dict):
+                total = float(balance['total'].get(coin, 0) or 0)
+                free = float(balance['free'].get(coin, 0) or 0) if isinstance(balance.get('free'), dict) else 0
+                used = float(balance['used'].get(coin, 0) or 0) if isinstance(balance.get('used'), dict) else 0
+
+            return {'total': total, 'free': free, 'used': used}
+        except Exception as e:
+            logger.error(f"스팟 잔고 조회 실패 ({coin}): {e}")
+            return {'total': 0, 'free': 0, 'used': 0}
+
     def get_closed_pnl(self, symbol: str = None, limit: int = 50) -> list:
         """청산된 포지션의 PnL 이력 조회 (바이빗 Closed PnL API)
 

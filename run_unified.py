@@ -27,6 +27,7 @@ from src.telegram_bot import TelegramNotifier, TelegramBot
 from src.trader import IchimokuTrader
 from src.surge_trader import SurgeTrader
 from src.ma100_trader import MA100Trader
+from src.spot_dca import SpotDCA
 from src.balance_tracker import BalanceTracker
 from src.chart_generator import ChartGenerator
 
@@ -53,7 +54,10 @@ class UnifiedTrader:
         initial_balance: float = 1000.0,
         daily_loss_limit_pct: float = 20.0,
         surge_max_positions: int = 3,
-        ma100_max_positions: int = 20
+        ma100_max_positions: int = 20,
+        dca_interval: float = None,
+        dca_amount: float = None,
+        dca_reserve: float = None,
     ):
         self.paper = paper
         self.testnet = testnet
@@ -98,6 +102,16 @@ class UnifiedTrader:
             get_excluded_symbols=lambda: set(self.ichimoku.positions.keys()) | set(self.ma100.positions.keys())
         )
 
+        # 스팟 DCA (공유 리소스 주입)
+        self.dca = SpotDCA(
+            paper=paper,
+            client=self.client,
+            notifier=self.notifier,
+            interval_hours=dca_interval,
+            base_amount=dca_amount,
+            min_reserve=dca_reserve,
+        )
+
         # 텔레그램 콜백을 통합 메서드로 재등록
         self.telegram_bot.set_callbacks(
             get_balance=self._get_balance,
@@ -139,7 +153,10 @@ class UnifiedTrader:
             stop_surge=self.surge.stop,
             start_surge=self.surge.resume,
             stop_ma100=self.ma100.stop,
-            start_ma100=self.ma100.resume
+            start_ma100=self.ma100.resume,
+            stop_dca=self.dca.stop,
+            start_dca=self.dca.resume,
+            get_dca_summary=self.dca.get_accumulation_summary,
         )
 
         # 설정 콜백
@@ -155,6 +172,7 @@ class UnifiedTrader:
             'ichimoku_running': self.ichimoku.running,
             'surge_running': self.surge.running,
             'ma100_running': self.ma100.running,
+            'dca_running': self.dca.running,
             'surge_daily_pnl': self.surge.daily_pnl,
             'surge_daily_limit': self.surge.daily_loss_limit,
             'surge_positions': len(self.surge.positions),
@@ -237,16 +255,18 @@ class UnifiedTrader:
         return history
 
     def _stop_all(self):
-        """세 전략 모두 중지"""
+        """모든 전략 중지"""
         self.ichimoku.stop()
         self.surge.stop()
         self.ma100.stop()
+        self.dca.stop()
 
     def _resume_all(self):
-        """세 전략 모두 재개"""
+        """모든 전략 재개"""
         self.ichimoku.resume()
         self.surge.resume()
         self.ma100.resume()
+        self.dca.resume()
 
     def _sync_all(self) -> dict:
         """세 전략 모두 포지션 동기화"""
@@ -352,6 +372,21 @@ class UnifiedTrader:
 
             await asyncio.sleep(300)  # 5분
 
+    async def _dca_loop(self):
+        """스팟 DCA 루프 (interval_hours마다)"""
+        while True:
+            if self.dca.running:
+                try:
+                    self.dca.run_once()
+                except Exception as e:
+                    logger.error(f"[DCA] 루프 오류: {e}")
+                    self.notifier.send_sync(f"⚠️ DCA 오류: {e}")
+
+            # DCA 주기의 1/4 간격으로 체크 (정확한 타이밍 보장)
+            check_interval = max(60, self.dca.params['interval_hours'] * 3600 / 4)
+            logger.info(f"[DCA] 다음 체크까지 {check_interval/60:.0f}분 대기")
+            await asyncio.sleep(check_interval)
+
     async def run_async(self):
         """세 전략을 하나의 asyncio 루프에서 실행"""
         mode = "PAPER" if self.paper else "LIVE"
@@ -361,16 +396,23 @@ class UnifiedTrader:
         await self.telegram_bot.start_polling()
 
         # 시작 알림
+        dca_info = (
+            f"🛒 DCA: {self.dca.params['interval_hours']}h 주기, "
+            f"${self.dca.params['base_amount_usdt']}/회, "
+            f"BTC {int(self.dca.params['btc_ratio']*100)}% ETH {int(self.dca.params['eth_ratio']*100)}%"
+        )
         self.notifier.send_sync(
             f"🚀 <b>통합 봇 시작</b> [{mode}]\n\n"
             f"⛩️ 이치모쿠: 4시간봉 SHORT (20x)\n"
             f"📉 미러숏: 5분봉 SHORT (5x)\n"
-            f"📊 MA100: 일봉 SHORT ONLY (5x)"
+            f"📊 MA100: 일봉 SHORT ONLY (5x)\n"
+            f"{dca_info}"
         )
 
         self.ichimoku.running = True
         self.surge.running = True
         self.ma100.running = True
+        self.dca.running = True
 
         # 전략을 별도 asyncio Task로 실행
         ichimoku_task = asyncio.create_task(self._ichimoku_loop())
@@ -378,12 +420,14 @@ class UnifiedTrader:
         surge_task = asyncio.create_task(self._surge_loop())
         ma100_scan_task = asyncio.create_task(self._ma100_scan_loop())
         ma100_pos_task = asyncio.create_task(self._ma100_position_loop())
+        dca_task = asyncio.create_task(self._dca_loop())
 
         try:
             await asyncio.gather(
                 ichimoku_task, ichimoku_pos_task,
                 surge_task,
-                ma100_scan_task, ma100_pos_task
+                ma100_scan_task, ma100_pos_task,
+                dca_task
             )
         except asyncio.CancelledError:
             logger.info("통합 봇 종료")
@@ -423,6 +467,18 @@ def main():
         "--ma100-max-positions", type=int, default=20,
         help="MA100 최대 동시 포지션 수 (기본: 20개)"
     )
+    parser.add_argument(
+        "--dca-interval", type=float, default=None,
+        help="DCA 주기 (시간, 기본: 8)"
+    )
+    parser.add_argument(
+        "--dca-amount", type=float, default=None,
+        help="DCA 기본 매수액 USDT (기본: 10)"
+    )
+    parser.add_argument(
+        "--dca-reserve", type=float, default=None,
+        help="선물 마진 최소 유보액 USDT (기본: 500)"
+    )
     args = parser.parse_args()
 
     logger.info("=" * 60)
@@ -440,7 +496,10 @@ def main():
             initial_balance=args.initial,
             daily_loss_limit_pct=args.loss_limit,
             surge_max_positions=args.surge_max_positions,
-            ma100_max_positions=args.ma100_max_positions
+            ma100_max_positions=args.ma100_max_positions,
+            dca_interval=args.dca_interval,
+            dca_amount=args.dca_amount,
+            dca_reserve=args.dca_reserve,
         )
         trader.run()
 

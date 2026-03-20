@@ -162,6 +162,11 @@ class TelegramBot:
         self.stop_ma100_callback: Optional[Callable] = None
         self.start_ma100_callback: Optional[Callable] = None
 
+        # DCA 콜백
+        self.stop_dca_callback: Optional[Callable] = None
+        self.start_dca_callback: Optional[Callable] = None
+        self.get_dca_summary_callback: Optional[Callable] = None
+
         # 설정 콜백
         self.get_settings_callback: Optional[Callable] = None
         self.set_leverage_callback: Optional[Callable] = None
@@ -226,7 +231,10 @@ class TelegramBot:
         stop_surge: Callable = None,
         start_surge: Callable = None,
         stop_ma100: Callable = None,
-        start_ma100: Callable = None
+        start_ma100: Callable = None,
+        stop_dca: Callable = None,
+        start_dca: Callable = None,
+        get_dca_summary: Callable = None,
     ):
         """전략별 제어 콜백 설정"""
         self.get_strategy_status_callback = get_strategy_status
@@ -236,6 +244,9 @@ class TelegramBot:
         self.start_surge_callback = start_surge
         self.stop_ma100_callback = stop_ma100
         self.start_ma100_callback = start_ma100
+        self.stop_dca_callback = stop_dca
+        self.start_dca_callback = start_dca
+        self.get_dca_summary_callback = get_dca_summary
 
     def set_settings_callbacks(
         self,
@@ -285,10 +296,11 @@ class TelegramBot:
                 InlineKeyboardButton("📉 거래정보", callback_data="menu_trading"),
             ],
             [
-                InlineKeyboardButton("⚙️ 봇 제어", callback_data="menu_control"),
+                InlineKeyboardButton("🛒 DCA 현황", callback_data="dca_status"),
                 InlineKeyboardButton("🔧 설정", callback_data="menu_settings"),
             ],
             [
+                InlineKeyboardButton("⚙️ 봇 제어", callback_data="menu_control"),
                 InlineKeyboardButton("🔄 새로고침", callback_data="refresh"),
             ],
         ]
@@ -354,10 +366,15 @@ class TelegramBot:
             ma100_btn = "📊 MA100 ⏸" if ma100_running else "📊 MA100 ▶️"
             ma100_data = "ctrl_ma100_stop" if ma100_running else "ctrl_ma100_start"
 
+            dca_running = status.get('dca_running', False)
+            dca_btn = "🛒 DCA ⏸" if dca_running else "🛒 DCA ▶️"
+            dca_data = "ctrl_dca_stop" if dca_running else "ctrl_dca_start"
+
             keyboard = [
                 [InlineKeyboardButton(ich_btn, callback_data=ich_data)],
                 [InlineKeyboardButton(surge_btn, callback_data=surge_data)],
                 [InlineKeyboardButton(ma100_btn, callback_data=ma100_data)],
+                [InlineKeyboardButton(dca_btn, callback_data=dca_data)],
                 [InlineKeyboardButton("🔄 동기화", callback_data="sync_positions")],
                 [InlineKeyboardButton("← 뒤로", callback_data="back_main")],
             ]
@@ -577,13 +594,24 @@ class TelegramBot:
                 surge_limit = st.get('surge_daily_limit', 0)
                 pnl_sign = "+" if surge_pnl >= 0 else ""
 
+                dca_emoji = "🟢" if st.get('dca_running') else "🔴"
+
                 strategy_status_text = f"""
-⛩️ 이치모쿠: {ich_emoji} | 📉 미러숏: {surge_emoji} | 📊 MA100: {ma100_emoji}
+⛩️{ich_emoji} 📉{surge_emoji} 📊{ma100_emoji} 🛒{dca_emoji}
 🕐 갱신: {now} UTC
 
 📊 <b>미러숏 오늘</b>
 ├ 손익: <code>{pnl_sign}${surge_pnl:,.2f}</code>
 └ 한도: <code>${surge_limit:,.0f}</code>"""
+
+                # DCA 적립 현황
+                if self.get_dca_summary_callback:
+                    try:
+                        dca_summary = self.get_dca_summary_callback()
+                        if dca_summary and dca_summary != "적립 내역 없음":
+                            strategy_status_text += f"\n\n🛒 <b>DCA 적립</b>\n{dca_summary}"
+                    except:
+                        pass
             except:
                 strategy_status_text = f"\n🕐 갱신: {now} UTC"
         else:
@@ -773,6 +801,11 @@ class TelegramBot:
             await self._show_trade_history(query)
             return
 
+        # DCA 현황
+        if data == "dca_status":
+            await self._show_dca_status(query)
+            return
+
         # 시황 분석 메뉴
         if data == "menu_analysis":
             text = "📊 <b>시황 분석</b>\n\n원하는 분석을 선택하세요"
@@ -938,6 +971,20 @@ class TelegramBot:
             if self.start_ma100_callback:
                 self.start_ma100_callback()
             text = "▶️ MA100 전략 시작됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        if data == "ctrl_dca_stop":
+            if self.stop_dca_callback:
+                self.stop_dca_callback()
+            text = "⏸ DCA 적립 중지됨"
+            await self._safe_edit_message(query, text, self._get_control_keyboard())
+            return
+
+        if data == "ctrl_dca_start":
+            if self.start_dca_callback:
+                self.start_dca_callback()
+            text = "▶️ DCA 적립 시작됨"
             await self._safe_edit_message(query, text, self._get_control_keyboard())
             return
 
@@ -1756,6 +1803,25 @@ class TelegramBot:
 
         except Exception as e:
             await self._safe_edit_message(query, f"❌ 조회 실패: {e}", self._get_trading_keyboard())
+
+    async def _show_dca_status(self, query):
+        """DCA 적립 현황 표시"""
+        if not self.get_dca_summary_callback:
+            await self._safe_edit_message(query, "❌ DCA 기능 사용 불가", self._get_back_keyboard())
+            return
+
+        try:
+            summary = self.get_dca_summary_callback()
+            dca_running = False
+            if self.get_strategy_status_callback:
+                st = self.get_strategy_status_callback()
+                dca_running = st.get('dca_running', False)
+
+            status_emoji = "🟢 실행중" if dca_running else "🔴 중지됨"
+            text = f"🛒 <b>DCA 적립 현황</b>\n\n상태: {status_emoji}\n\n{summary}"
+            await self._safe_edit_message(query, text, self._get_back_keyboard())
+        except Exception as e:
+            await self._safe_edit_message(query, f"❌ DCA 조회 실패: {e}", self._get_back_keyboard())
 
     # ==================== 설정 변경 핸들러 ====================
 
