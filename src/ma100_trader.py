@@ -860,7 +860,7 @@ class MA100Trader:
     # ==================== 메인 실행 ====================
 
     def check_positions(self):
-        """포지션 상태만 체크 (수동/거래소 청산 감지 + 트레일링 보완). 자주 호출용."""
+        """포지션 상태만 체크 (수동/거래소 청산 감지 + 트레일링 + DCA). 자주 호출용."""
         if not self.positions:
             return
 
@@ -868,6 +868,16 @@ class MA100Trader:
 
         for symbol in list(self.positions.keys()):
             self._ensure_trailing_stop(symbol)
+
+            # DCA 대기 주문 실시간 체크
+            pos = self.positions.get(symbol)
+            if pos and pos.get("pending_dca"):
+                try:
+                    ticker = self.client.exchange.fetch_ticker(symbol)
+                    current_price = float(ticker['last'])
+                    self._process_dca(symbol, current_price)
+                except Exception as e:
+                    logger.debug(f"MA100 DCA 가격 조회 실패 ({symbol}): {e}")
 
     def run_once(self):
         """일봉 갱신 시 전체 스캔 + 시그널 진입"""
