@@ -166,6 +166,9 @@ class TelegramBot:
         self.stop_dca_callback: Optional[Callable] = None
         self.start_dca_callback: Optional[Callable] = None
         self.get_dca_summary_callback: Optional[Callable] = None
+        self.get_dca_detail_callback: Optional[Callable] = None
+        self.get_dca_params_callback: Optional[Callable] = None
+        self.set_dca_param_callback: Optional[Callable] = None
 
         # 설정 콜백
         self.get_settings_callback: Optional[Callable] = None
@@ -235,6 +238,9 @@ class TelegramBot:
         stop_dca: Callable = None,
         start_dca: Callable = None,
         get_dca_summary: Callable = None,
+        get_dca_detail: Callable = None,
+        get_dca_params: Callable = None,
+        set_dca_param: Callable = None,
     ):
         """전략별 제어 콜백 설정"""
         self.get_strategy_status_callback = get_strategy_status
@@ -247,6 +253,9 @@ class TelegramBot:
         self.stop_dca_callback = stop_dca
         self.start_dca_callback = start_dca
         self.get_dca_summary_callback = get_dca_summary
+        self.get_dca_detail_callback = get_dca_detail
+        self.get_dca_params_callback = get_dca_params
+        self.set_dca_param_callback = set_dca_param
 
     def set_settings_callbacks(
         self,
@@ -804,6 +813,95 @@ class TelegramBot:
         # DCA 현황
         if data == "dca_status":
             await self._show_dca_status(query)
+            return
+
+        if data == "dca_settings":
+            await self._show_dca_settings(query)
+            return
+
+        if data == "dca_set_amount":
+            await self._show_dca_param_options(
+                query, "base_amount_usdt", "💵 매수금액",
+                [3, 5, 7, 10, 15, 20, 30, 50], fmt="${}")
+            return
+
+        if data == "dca_set_interval":
+            await self._show_dca_param_options(
+                query, "interval_hours", "⏱ 인터벌",
+                [4, 6, 8, 12, 24, 48], fmt="{}시간")
+            return
+
+        if data == "dca_set_ratio":
+            # BTC:ETH 비율 프리셋
+            ratio_options = [
+                ("BTC 20/ETH 80", 0.2), ("BTC 30/ETH 70", 0.3),
+                ("BTC 40/ETH 60", 0.4), ("BTC 50/ETH 50", 0.5),
+                ("BTC 60/ETH 40", 0.6), ("BTC 70/ETH 30", 0.7),
+                ("BTC 80/ETH 20", 0.8), ("BTC 100", 1.0),
+                ("ETH 100", 0.0),
+            ]
+            buttons = []
+            row = []
+            for label, btc_r in ratio_options:
+                row.append(InlineKeyboardButton(label, callback_data=f"dca_ratio_{btc_r}"))
+                if len(row) >= 2:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row)
+            buttons.append([InlineKeyboardButton("◀️ 설정으로", callback_data="dca_settings")])
+            current = ""
+            if self.get_dca_params_callback:
+                p = self.get_dca_params_callback()
+                current = f"\n현재: BTC {p.get('btc_ratio',0.4)*100:.0f}% / ETH {p.get('eth_ratio',0.6)*100:.0f}%"
+            await self._safe_edit_message(
+                query, f"📊 <b>BTC/ETH 비율 변경</b>{current}",
+                InlineKeyboardMarkup(buttons))
+            return
+
+        if data == "dca_set_min_bal":
+            await self._show_dca_param_options(
+                query, "min_balance_to_start", "💰 최소잔고 (DCA 시작 조건)",
+                [0, 5000, 8000, 10000, 15000, 20000, 50000], fmt="${:,}")
+            return
+
+        if data == "dca_set_reserve":
+            await self._show_dca_param_options(
+                query, "min_futures_reserve", "🏦 선물 마진 유보액",
+                [200, 300, 500, 1000, 2000, 3000], fmt="${:,}")
+            return
+
+        if data == "dca_set_bonus":
+            await self._show_dca_param_options(
+                query, "profit_bonus_pct", "📈 선물수익 보너스 비율",
+                [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5], fmt="{:.0%}")
+            return
+
+        # DCA 비율 변경 처리
+        if data.startswith("dca_ratio_"):
+            btc_ratio = float(data.split("_")[2])
+            eth_ratio = round(1.0 - btc_ratio, 2)
+            if self.set_dca_param_callback:
+                self.set_dca_param_callback("btc_ratio", btc_ratio)
+                self.set_dca_param_callback("eth_ratio", eth_ratio)
+            text = f"✅ 비율 변경: BTC {btc_ratio*100:.0f}% / ETH {eth_ratio*100:.0f}%"
+            await self._safe_edit_message(query, text, InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ DCA 설정", callback_data="dca_settings")]
+            ]))
+            return
+
+        # DCA 파라미터 값 변경 처리
+        if data.startswith("dca_val_"):
+            parts = data.split("_", 3)  # dca_val_key_value
+            param_key = parts[2]
+            value = float(parts[3])
+            if self.set_dca_param_callback:
+                result = self.set_dca_param_callback(param_key, value)
+            else:
+                result = "❌ 설정 변경 불가"
+            await self._safe_edit_message(query, result, InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ DCA 설정", callback_data="dca_settings")]
+            ]))
             return
 
         # 시황 분석 메뉴
@@ -1811,17 +1909,81 @@ class TelegramBot:
             return
 
         try:
-            summary = self.get_dca_summary_callback()
+            # 상세 현황 우선, 없으면 요약
+            if self.get_dca_detail_callback:
+                detail = self.get_dca_detail_callback()
+            else:
+                detail = self.get_dca_summary_callback()
+
             dca_running = False
             if self.get_strategy_status_callback:
                 st = self.get_strategy_status_callback()
                 dca_running = st.get('dca_running', False)
 
             status_emoji = "🟢 실행중" if dca_running else "🔴 중지됨"
-            text = f"🛒 <b>DCA 적립 현황</b>\n\n상태: {status_emoji}\n\n{summary}"
-            await self._safe_edit_message(query, text, self._get_back_keyboard())
+            text = f"🛒 <b>DCA 적립 현황</b>\n\n상태: {status_emoji}\n\n{detail}"
+
+            keyboard = [
+                [InlineKeyboardButton("⚙️ DCA 설정 변경", callback_data="dca_settings")],
+                [InlineKeyboardButton("🔄 새로고침", callback_data="dca_status"),
+                 InlineKeyboardButton("◀️ 메인", callback_data="back_main")],
+            ]
+            await self._safe_edit_message(query, text, InlineKeyboardMarkup(keyboard))
         except Exception as e:
             await self._safe_edit_message(query, f"❌ DCA 조회 실패: {e}", self._get_back_keyboard())
+
+    async def _show_dca_settings(self, query):
+        """DCA 설정 변경 메뉴"""
+        keyboard = [
+            [InlineKeyboardButton("💵 매수금액", callback_data="dca_set_amount"),
+             InlineKeyboardButton("⏱ 인터벌", callback_data="dca_set_interval")],
+            [InlineKeyboardButton("📊 BTC/ETH 비율", callback_data="dca_set_ratio"),
+             InlineKeyboardButton("💰 최소잔고", callback_data="dca_set_min_bal")],
+            [InlineKeyboardButton("🏦 마진유보", callback_data="dca_set_reserve"),
+             InlineKeyboardButton("📈 보너스%", callback_data="dca_set_bonus")],
+            [InlineKeyboardButton("◀️ DCA 현황", callback_data="dca_status")],
+        ]
+
+        # 현재 설정 표시
+        text = "⚙️ <b>DCA 설정 변경</b>\n\n변경할 항목을 선택하세요."
+        if self.get_dca_params_callback:
+            p = self.get_dca_params_callback()
+            text = (
+                f"⚙️ <b>DCA 설정 변경</b>\n\n"
+                f"💵 매수금액: <b>${p.get('base_amount_usdt', 10):.0f}</b>/회\n"
+                f"⏱ 인터벌: <b>{p.get('interval_hours', 8)}시간</b>\n"
+                f"📊 비율: BTC <b>{p.get('btc_ratio', 0.4)*100:.0f}%</b> / ETH <b>{p.get('eth_ratio', 0.6)*100:.0f}%</b>\n"
+                f"💰 최소잔고: <b>${p.get('min_balance_to_start', 10000):,.0f}</b>\n"
+                f"🏦 마진유보: <b>${p.get('min_futures_reserve', 500):,.0f}</b>\n"
+                f"📈 보너스: 선물수익의 <b>{p.get('profit_bonus_pct', 0.1)*100:.0f}%</b>\n\n"
+                f"변경할 항목을 선택하세요."
+            )
+
+        await self._safe_edit_message(query, text, InlineKeyboardMarkup(keyboard))
+
+    async def _show_dca_param_options(self, query, param_key: str, label: str, options: list, fmt: str = "{}"):
+        """DCA 파라미터 선택 옵션 표시"""
+        buttons = []
+        row = []
+        for val in options:
+            display = fmt.format(val)
+            row.append(InlineKeyboardButton(display, callback_data=f"dca_val_{param_key}_{val}"))
+            if len(row) >= 3:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([InlineKeyboardButton("◀️ 설정으로", callback_data="dca_settings")])
+
+        # 현재 값 표시
+        current = ""
+        if self.get_dca_params_callback:
+            p = self.get_dca_params_callback()
+            cur_val = p.get(param_key, "?")
+            current = f"\n현재: <b>{fmt.format(cur_val)}</b>"
+
+        text = f"⚙️ <b>{label} 변경</b>{current}\n\n원하는 값을 선택하세요."
+        await self._safe_edit_message(query, text, InlineKeyboardMarkup(buttons))
 
     # ==================== 설정 변경 핸들러 ====================
 

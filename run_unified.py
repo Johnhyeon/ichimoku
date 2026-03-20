@@ -157,6 +157,9 @@ class UnifiedTrader:
             stop_dca=self.dca.stop,
             start_dca=self.dca.resume,
             get_dca_summary=self.dca.get_accumulation_summary,
+            get_dca_detail=self.dca.get_detailed_status,
+            get_dca_params=self.dca.get_params,
+            set_dca_param=self.dca.set_param,
         )
 
         # 설정 콜백

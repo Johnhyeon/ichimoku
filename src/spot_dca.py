@@ -371,6 +371,82 @@ class SpotDCA:
 
         return "\n".join(lines)
 
+    def get_params(self) -> dict:
+        """현재 DCA 파라미터 반환"""
+        return self.params.copy()
+
+    def set_param(self, key: str, value) -> str:
+        """DCA 파라미터 변경. 변경 결과 텍스트 반환."""
+        if key not in self.params:
+            return f"❌ 알 수 없는 파라미터: {key}"
+        old = self.params[key]
+        self.params[key] = type(old)(value)
+        logger.info(f"[DCA] 파라미터 변경: {key} = {old} → {self.params[key]}")
+        return f"✅ {key}: {old} → {self.params[key]}"
+
+    def get_detailed_status(self) -> str:
+        """상세 DCA 현황 (텔레그램용)"""
+        p = self.params
+        acc = self.state.get("accumulated", {})
+        last_time = self.state.get("last_dca_time")
+
+        # 설정 정보
+        lines = [
+            f"⚙️ <b>설정</b>",
+            f"  매수액: ${p['base_amount_usdt']:.0f} / {p['interval_hours']}시간",
+            f"  비율: BTC {p['btc_ratio']*100:.0f}% / ETH {p['eth_ratio']*100:.0f}%",
+            f"  보너스: 선물수익의 {p['profit_bonus_pct']*100:.0f}%",
+            f"  최소잔고: ${p['min_balance_to_start']:,.0f}",
+            f"  마진유보: ${p['min_futures_reserve']:,.0f}",
+            "",
+        ]
+
+        # 적립 현황
+        total_invested = 0
+        total_value = 0
+        for asset in ["BTC", "ETH"]:
+            a = acc.get(asset, {})
+            qty = a.get("total_qty", 0)
+            inv = a.get("total_invested_usdt", 0)
+            count = a.get("buy_count", 0)
+            total_invested += inv
+
+            if count == 0:
+                continue
+
+            avg = inv / qty if qty > 0 else 0
+            emoji = "₿" if asset == "BTC" else "Ξ"
+
+            try:
+                ticker = self.client.get_ticker(f"{asset}/USDT:USDT")
+                price = ticker['last']
+                val = qty * price
+                total_value += val
+                pnl = val - inv
+                pnl_pct = pnl / inv * 100 if inv > 0 else 0
+                sign = "+" if pnl >= 0 else ""
+                lines.append(
+                    f"{emoji} <b>{asset}</b>\n"
+                    f"  보유: {qty:.6f} ({count}회 매수)\n"
+                    f"  평균단가: ${avg:,.0f}\n"
+                    f"  투자: ${inv:,.0f} → 평가: ${val:,.0f} ({sign}{pnl_pct:.1f}%)"
+                )
+            except Exception:
+                lines.append(
+                    f"{emoji} <b>{asset}</b>: {qty:.6f} (${inv:,.0f}, {count}회)"
+                )
+
+        if total_invested > 0:
+            total_pnl = total_value - total_invested
+            sign = "+" if total_pnl >= 0 else ""
+            lines.append(f"\n💰 합계: ${total_invested:,.0f} → ${total_value:,.0f} ({sign}${total_pnl:,.0f})")
+
+        # 마지막 매수 시간
+        if last_time:
+            lines.append(f"\n🕐 마지막 매수: {last_time}")
+
+        return "\n".join(lines)
+
     def stop(self):
         """DCA 중지"""
         self.running = False
