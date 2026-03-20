@@ -379,15 +379,21 @@ class IchimokuTrader:
                 pos_copy = pos.copy()
                 ex_pos = pos_map.get(pos["symbol"], {})
 
-                entry = float(pos.get("entry_price", 0))
+                # 거래소 평균단가 우선, 없으면 봇 메모리
+                ex_entry = float(ex_pos.get("entry_price", 0))
+                entry = ex_entry if ex_entry > 0 else float(pos.get("entry_price", 0))
                 current_price = float(ex_pos.get("mark_price", 0))
                 pnl_usd = float(ex_pos.get("pnl", 0))
                 side = pos.get("side", "long")
+                size = float(ex_pos.get("size", 0)) or float(pos.get("size", 0))
                 sl = float(pos.get("stop_loss", 0))
                 tp = float(pos.get("take_profit", 0))
 
-                # 수익률 계산
-                if entry > 0 and current_price > 0:
+                # 수익률: 마진 대비 PnL (가장 정확)
+                if size > 0 and entry > 0:
+                    margin = size * entry / float(ex_pos.get("leverage", self.leverage))
+                    pnl_pct = (pnl_usd / margin * 100) if margin > 0 else 0
+                elif entry > 0 and current_price > 0:
                     if side == "long":
                         pnl_pct = (current_price - entry) / entry * 100 * self.leverage
                     else:

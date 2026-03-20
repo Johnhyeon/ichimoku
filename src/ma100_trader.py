@@ -820,16 +820,23 @@ class MA100Trader:
                 pos_copy = pos.copy()
                 ex_pos = pos_map.get(pos["symbol"], {})
 
-                entry = float(pos.get("entry_price", 0))
+                ex_entry = float(ex_pos.get("entry_price", 0))
+                entry = ex_entry if ex_entry > 0 else float(pos.get("entry_price", 0))
                 current_price = float(ex_pos.get("mark_price", 0))
                 pnl_usd = float(ex_pos.get("pnl", 0))
                 side = pos.get("side", "long")
+                size = float(ex_pos.get("size", 0)) or float(pos.get("size", 0))
+                leverage = float(ex_pos.get("leverage", self.params['leverage']))
 
-                if entry > 0 and current_price > 0:
+                # 마진 대비 PnL (가장 정확)
+                if size > 0 and entry > 0 and leverage > 0:
+                    margin = size * entry / leverage
+                    pnl_pct = (pnl_usd / margin * 100) if margin > 0 else 0
+                elif entry > 0 and current_price > 0:
                     if side == "long":
-                        pnl_pct = (current_price - entry) / entry * 100 * self.params['leverage']
+                        pnl_pct = (current_price - entry) / entry * 100 * leverage
                     else:
-                        pnl_pct = (entry - current_price) / entry * 100 * self.params['leverage']
+                        pnl_pct = (entry - current_price) / entry * 100 * leverage
                 else:
                     pnl_pct = 0
 
