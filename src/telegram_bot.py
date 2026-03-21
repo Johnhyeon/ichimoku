@@ -860,12 +860,6 @@ class TelegramBot:
                 InlineKeyboardMarkup(buttons))
             return
 
-        if data == "dca_set_min_bal":
-            await self._show_dca_param_options(
-                query, "min_balance_to_start", "💰 최소잔고 (DCA 시작 조건)",
-                [0, 5000, 8000, 10000, 15000, 20000, 50000], fmt="${:,}")
-            return
-
         if data == "dca_set_reserve":
             await self._show_dca_param_options(
                 query, "min_futures_reserve", "🏦 선물 마진 유보액",
@@ -874,7 +868,7 @@ class TelegramBot:
 
         if data == "dca_set_bonus":
             await self._show_dca_param_options(
-                query, "profit_bonus_pct", "📈 선물수익 보너스 비율",
+                query, "weekly_bonus_pct", "🎁 주간 보너스 비율 (선물수익의 %)",
                 [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5], fmt="{:.0%}")
             return
 
@@ -1939,9 +1933,8 @@ class TelegramBot:
             [InlineKeyboardButton("💵 매수금액", callback_data="dca_set_amount"),
              InlineKeyboardButton("⏱ 인터벌", callback_data="dca_set_interval")],
             [InlineKeyboardButton("📊 BTC/ETH 비율", callback_data="dca_set_ratio"),
-             InlineKeyboardButton("💰 최소잔고", callback_data="dca_set_min_bal")],
-            [InlineKeyboardButton("🏦 마진유보", callback_data="dca_set_reserve"),
-             InlineKeyboardButton("📈 보너스%", callback_data="dca_set_bonus")],
+             InlineKeyboardButton("🏦 마진유보", callback_data="dca_set_reserve")],
+            [InlineKeyboardButton("🎁 주간보너스%", callback_data="dca_set_bonus")],
             [InlineKeyboardButton("◀️ DCA 현황", callback_data="dca_status")],
         ]
 
@@ -1954,9 +1947,8 @@ class TelegramBot:
                 f"💵 매수금액: <b>${p.get('base_amount_usdt', 10):.0f}</b>/회\n"
                 f"⏱ 인터벌: <b>{p.get('interval_hours', 8)}시간</b>\n"
                 f"📊 비율: BTC <b>{p.get('btc_ratio', 0.4)*100:.0f}%</b> / ETH <b>{p.get('eth_ratio', 0.6)*100:.0f}%</b>\n"
-                f"💰 최소잔고: <b>${p.get('min_balance_to_start', 10000):,.0f}</b>\n"
                 f"🏦 마진유보: <b>${p.get('min_futures_reserve', 500):,.0f}</b>\n"
-                f"📈 보너스: 선물수익의 <b>{p.get('profit_bonus_pct', 0.1)*100:.0f}%</b>\n\n"
+                f"🎁 주간보너스: 일요일 00시 선물수익의 <b>{p.get('weekly_bonus_pct', 0.1)*100:.0f}%</b>\n\n"
                 f"변경할 항목을 선택하세요."
             )
 

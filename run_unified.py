@@ -376,14 +376,20 @@ class UnifiedTrader:
             await asyncio.sleep(300)  # 5분
 
     async def _dca_loop(self):
-        """스팟 DCA 루프 (interval_hours마다)"""
+        """스팟 DCA 루프 (기본 DCA + 주간 보너스)"""
         while True:
             if self.dca.running:
                 try:
                     self.dca.run_once()
                 except Exception as e:
-                    logger.error(f"[DCA] 루프 오류: {e}")
+                    logger.error(f"[DCA] 기본 DCA 오류: {e}")
                     self.notifier.send_sync(f"⚠️ DCA 오류: {e}")
+
+                try:
+                    self.dca.run_weekly_bonus()
+                except Exception as e:
+                    logger.error(f"[DCA] 주간 보너스 오류: {e}")
+                    self.notifier.send_sync(f"⚠️ DCA 주간 보너스 오류: {e}")
 
             # DCA 주기의 1/4 간격으로 체크 (정확한 타이밍 보장)
             check_interval = max(60, self.dca.params['interval_hours'] * 3600 / 4)
@@ -400,9 +406,9 @@ class UnifiedTrader:
 
         # 시작 알림
         dca_info = (
-            f"🛒 DCA: {self.dca.params['interval_hours']}h 주기, "
-            f"${self.dca.params['base_amount_usdt']}/회, "
-            f"BTC {int(self.dca.params['btc_ratio']*100)}% ETH {int(self.dca.params['eth_ratio']*100)}%"
+            f"🛒 DCA: ${self.dca.params['base_amount_usdt']}/{self.dca.params['interval_hours']}h, "
+            f"BTC {int(self.dca.params['btc_ratio']*100)}% ETH {int(self.dca.params['eth_ratio']*100)}%, "
+            f"주간보너스 {int(self.dca.params['weekly_bonus_pct']*100)}%"
         )
         self.notifier.send_sync(
             f"🚀 <b>통합 봇 시작</b> [{mode}]\n\n"

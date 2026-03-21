@@ -4,19 +4,16 @@
 BTC/ETH를 일정 주기로 자동 매수하여 장기 보유합니다.
 선물 숏 전략과 자연스러운 헷지 효과를 제공합니다.
 
-파라미터:
-  - interval_hours: DCA 주기 (기본 8시간)
-  - base_amount_usdt: 기본 매수액 (기본 $10)
-  - btc_ratio / eth_ratio: BTC 40%, ETH 60%
-  - profit_bonus_pct: 선물 수익의 10%를 추가 매수
-  - min_futures_reserve: 선물 마진 최소 유보액 ($500)
+구조:
+  - 기본 DCA: 8시간마다 $10 고정 매수 (BTC 40% / ETH 60%)
+  - 주간 보너스: 일요일 00시(KST)에 한 주 선물 수익 정산 → 수익의 10% 스팟 매수
 """
 
 import logging
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src.bybit_client import BybitClient
@@ -24,16 +21,19 @@ from src.telegram_bot import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
+KST = timezone(timedelta(hours=9))
+
 DCA_PARAMS = {
     'enabled': True,
     'interval_hours': 8,          # DCA 주기
     'base_amount_usdt': 10.0,     # 기본 매수액
     'btc_ratio': 0.4,             # BTC 40%
     'eth_ratio': 0.6,             # ETH 60%
-    'profit_bonus_pct': 0.10,     # 선물 수익의 10%를 추가 매수
+    'weekly_bonus_pct': 0.10,     # 주간 선물 수익의 10%를 보너스 매수
+    'weekly_bonus_day': 6,        # 0=월 ... 6=일 (일요일)
+    'weekly_bonus_hour_kst': 0,   # KST 기준 시간 (00시)
     'min_futures_reserve': 500.0, # 선물 마진 최소 유보액
     'min_order_usdt': 5.0,        # Bybit 최소 주문
-    'min_balance_to_start': 10000.0,  # 이 잔고 이상일 때만 DCA 시작
 }
 
 STATE_FILE = "data/dca_state.json"
@@ -86,7 +86,8 @@ class SpotDCA:
 
         return {
             "last_dca_time": None,
-            "last_pnl_check_ms": 0,
+            "last_weekly_bonus_time": None,
+            "last_weekly_pnl_check_ms": 0,
             "accumulated": {
                 "BTC": {"total_qty": 0.0, "total_invested_usdt": 0.0, "buy_count": 0},
                 "ETH": {"total_qty": 0.0, "total_invested_usdt": 0.0, "buy_count": 0},
@@ -117,11 +118,35 @@ class SpotDCA:
         interval = timedelta(hours=self.params['interval_hours'])
         return datetime.utcnow() >= last_dt + interval
 
-    def _get_futures_profit_since_last(self) -> float:
-        """마지막 DCA 이후 선물 실현손익 합산"""
+    def is_time_for_weekly_bonus(self) -> bool:
+        """주간 보너스 실행 시간인지 확인 (일요일 00시 KST)"""
+        now_kst = datetime.now(KST)
+        target_day = self.params['weekly_bonus_day']
+        target_hour = self.params['weekly_bonus_hour_kst']
+
+        # 요일/시간 체크
+        if now_kst.weekday() != target_day or now_kst.hour != target_hour:
+            return False
+
+        # 이번 주에 이미 실행했는지 확인
+        last_time = self.state.get("last_weekly_bonus_time")
+        if not last_time:
+            return True
+
         try:
-            last_check_ms = self.state.get("last_pnl_check_ms", 0)
-            records = self.client.get_closed_pnl(limit=50)
+            last_dt = datetime.fromisoformat(last_time)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            # 마지막 실행 후 6일 이상 지났으면 OK
+            return (datetime.now(timezone.utc) - last_dt) > timedelta(days=6)
+        except (ValueError, TypeError):
+            return True
+
+    def _get_weekly_futures_profit(self) -> float:
+        """지난 주간 선물 실현손익 합산"""
+        try:
+            last_check_ms = self.state.get("last_weekly_pnl_check_ms", 0)
+            records = self.client.get_closed_pnl(limit=200)
 
             profit = 0.0
             for r in records:
@@ -131,22 +156,8 @@ class SpotDCA:
 
             return profit
         except Exception as e:
-            logger.warning(f"[DCA] 선물 손익 조회 실패: {e}")
+            logger.warning(f"[DCA] 주간 선물 손익 조회 실패: {e}")
             return 0.0
-
-    def _calculate_dca_amount(self) -> float:
-        """DCA 매수 금액 계산 (기본 + 보너스)"""
-        base = self.params['base_amount_usdt']
-
-        # 선물 수익 보너스 계산
-        bonus = 0.0
-        futures_profit = self._get_futures_profit_since_last()
-        if futures_profit > 0:
-            bonus = futures_profit * self.params['profit_bonus_pct']
-            logger.info(f"[DCA] 선물 수익 ${futures_profit:.2f} → 보너스 ${bonus:.2f}")
-
-        total = base + bonus
-        return total
 
     def _check_balance_sufficient(self, required_usdt: float) -> bool:
         """잔고 충분한지 확인 (선물 마진 유보 고려)"""
@@ -177,7 +188,6 @@ class SpotDCA:
             return None
 
         if self.paper:
-            # Paper 모드: 현재가 기준 시뮬레이션
             try:
                 ticker = self.client.get_ticker(f"{asset}/USDT:USDT")
                 price = ticker['last']
@@ -195,7 +205,6 @@ class SpotDCA:
                 logger.error(f"[DCA][PAPER] {asset} 시세 조회 실패: {e}")
                 return None
         else:
-            # 실거래
             try:
                 result = self.client.spot_market_buy(symbol, usdt_amount)
                 logger.info(
@@ -216,53 +225,15 @@ class SpotDCA:
         acc["total_invested_usdt"] += cost
         acc["buy_count"] += 1
 
-    def run_once(self):
-        """DCA 1사이클 실행"""
-        if not self.params['enabled']:
-            return
-
-        if not self.is_time_for_dca():
-            return
-
-        # 0. 최소 잔고 확인
-        min_bal = self.params.get('min_balance_to_start', 0)
-        if min_bal > 0:
-            try:
-                balance = self.client.get_balance()
-                total_bal = balance.get('total', 0)
-                if total_bal < min_bal:
-                    logger.info(f"[DCA] 잔고 ${total_bal:,.0f} < ${min_bal:,.0f} → DCA 대기 중")
-                    return
-            except Exception as e:
-                logger.warning(f"[DCA] 잔고 확인 실패: {e}")
-                return
-
-        logger.info("[DCA] ═══ DCA 사이클 시작 ═══")
-
-        # 1. DCA 금액 계산
-        total_amount = self._calculate_dca_amount()
-        logger.info(f"[DCA] 이번 매수 총액: ${total_amount:.2f}")
-
-        # 2. 잔고 확인
-        if not self._check_balance_sufficient(total_amount):
-            msg = (
-                f"⚠️ [DCA] 잔고 부족으로 스킵\n"
-                f"필요: ${total_amount:.2f}\n"
-                f"유보: ${self.params['min_futures_reserve']:.0f}"
-            )
-            logger.warning(msg)
-            if self.notifier:
-                self.notifier.send_sync(msg)
-            return
-
-        # 3. BTC/ETH 각각 매수
+    def _do_buy(self, total_amount: float, label: str) -> dict:
+        """BTC/ETH 매수 실행 (기본 DCA, 주간 보너스 공용)"""
         btc_amount = total_amount * self.params['btc_ratio']
         eth_amount = total_amount * self.params['eth_ratio']
 
         results = {}
-        now = datetime.utcnow()
         history_entry = {
-            "time": now.isoformat(),
+            "time": datetime.utcnow().isoformat(),
+            "type": label,
             "total_usdt": total_amount,
             "buys": {},
         }
@@ -281,28 +252,97 @@ class SpotDCA:
                     "cost": cost,
                 }
 
-        # 4. 상태 업데이트
-        self.state["last_dca_time"] = now.isoformat()
-        self.state["last_pnl_check_ms"] = int(time.time() * 1000)
-
         # 히스토리 추가 (최근 100건만 유지)
         if history_entry["buys"]:
-            self.state["history"].append(history_entry)
+            self.state.setdefault("history", []).append(history_entry)
             self.state["history"] = self.state["history"][-100:]
 
+        return results
+
+    def run_once(self):
+        """기본 DCA 1사이클 실행 (고정 금액)"""
+        if not self.params['enabled']:
+            return
+
+        if not self.is_time_for_dca():
+            return
+
+        total_amount = self.params['base_amount_usdt']
+        logger.info(f"[DCA] === 기본 DCA 시작: ${total_amount:.2f} ===")
+
+        if not self._check_balance_sufficient(total_amount):
+            msg = (
+                f"⚠️ [DCA] 잔고 부족으로 스킵\n"
+                f"필요: ${total_amount:.2f}\n"
+                f"유보: ${self.params['min_futures_reserve']:.0f}"
+            )
+            logger.warning(msg)
+            if self.notifier:
+                self.notifier.send_sync(msg)
+            return
+
+        results = self._do_buy(total_amount, "dca")
+
+        self.state["last_dca_time"] = datetime.utcnow().isoformat()
         self._save_state()
 
-        # 5. 텔레그램 알림
         if results and self.notifier:
-            summary = self._get_buy_summary(results, total_amount)
+            summary = self._get_buy_summary(results, total_amount, "DCA 적립")
             self.notifier.send_sync(summary)
 
-        logger.info("[DCA] ═══ DCA 사이클 완료 ═══")
+        logger.info("[DCA] === 기본 DCA 완료 ===")
 
-    def _get_buy_summary(self, results: dict, total_amount: float) -> str:
+    def run_weekly_bonus(self):
+        """주간 보너스 실행 (일요일 00시 KST)"""
+        if not self.params['enabled']:
+            return
+
+        if not self.is_time_for_weekly_bonus():
+            return
+
+        # 주간 선물 수익 조회
+        profit = self._get_weekly_futures_profit()
+        logger.info(f"[DCA] === 주간 보너스 체크: 선물 수익 ${profit:.2f} ===")
+
+        if profit <= 0:
+            logger.info("[DCA] 주간 선물 수익 없음 → 보너스 스킵")
+            self.state["last_weekly_bonus_time"] = datetime.utcnow().isoformat()
+            self.state["last_weekly_pnl_check_ms"] = int(time.time() * 1000)
+            self._save_state()
+            return
+
+        bonus_amount = profit * self.params['weekly_bonus_pct']
+
+        if bonus_amount < self.params['min_order_usdt']:
+            logger.info(f"[DCA] 보너스 ${bonus_amount:.2f} < 최소주문 → 스킵")
+            self.state["last_weekly_bonus_time"] = datetime.utcnow().isoformat()
+            self.state["last_weekly_pnl_check_ms"] = int(time.time() * 1000)
+            self._save_state()
+            return
+
+        if not self._check_balance_sufficient(bonus_amount):
+            logger.warning(f"[DCA] 주간 보너스 잔고 부족: ${bonus_amount:.2f}")
+            return
+
+        results = self._do_buy(bonus_amount, "weekly_bonus")
+
+        self.state["last_weekly_bonus_time"] = datetime.utcnow().isoformat()
+        self.state["last_weekly_pnl_check_ms"] = int(time.time() * 1000)
+        self._save_state()
+
+        if results and self.notifier:
+            summary = self._get_buy_summary(
+                results, bonus_amount,
+                f"주간 보너스 (수익 ${profit:.0f}의 {self.params['weekly_bonus_pct']*100:.0f}%)"
+            )
+            self.notifier.send_sync(summary)
+
+        logger.info(f"[DCA] === 주간 보너스 완료: ${bonus_amount:.2f} ===")
+
+    def _get_buy_summary(self, results: dict, total_amount: float, title: str) -> str:
         """매수 결과 텔레그램 요약"""
         mode = "[PAPER] " if self.paper else ""
-        text = f"🛒 <b>{mode}DCA 적립 완료</b>\n\n"
+        text = f"🛒 <b>{mode}{title}</b>\n\n"
 
         for asset, result in results.items():
             qty = result.get('amount', 0)
@@ -333,7 +373,6 @@ class SpotDCA:
     def get_accumulation_summary(self) -> str:
         """적립 현황 요약 텍스트 (텔레그램 대시보드용)"""
         acc = self.state.get("accumulated", {})
-        last_time = self.state.get("last_dca_time")
 
         lines = []
         for asset in ["BTC", "ETH"]:
@@ -348,7 +387,6 @@ class SpotDCA:
             avg_price = total_inv / total_qty if total_qty > 0 else 0
             emoji = "₿" if asset == "BTC" else "Ξ"
 
-            # 현재 평가액 계산
             try:
                 ticker = self.client.get_ticker(f"{asset}/USDT:USDT")
                 current_price = ticker['last']
@@ -389,14 +427,14 @@ class SpotDCA:
         p = self.params
         acc = self.state.get("accumulated", {})
         last_time = self.state.get("last_dca_time")
+        last_bonus = self.state.get("last_weekly_bonus_time")
 
         # 설정 정보
         lines = [
             f"⚙️ <b>설정</b>",
-            f"  매수액: ${p['base_amount_usdt']:.0f} / {p['interval_hours']}시간",
+            f"  기본: ${p['base_amount_usdt']:.0f} / {p['interval_hours']}시간",
             f"  비율: BTC {p['btc_ratio']*100:.0f}% / ETH {p['eth_ratio']*100:.0f}%",
-            f"  보너스: 선물수익의 {p['profit_bonus_pct']*100:.0f}%",
-            f"  최소잔고: ${p['min_balance_to_start']:,.0f}",
+            f"  주간보너스: 일요일 00시 선물수익의 {p['weekly_bonus_pct']*100:.0f}%",
             f"  마진유보: ${p['min_futures_reserve']:,.0f}",
             "",
         ]
@@ -441,9 +479,10 @@ class SpotDCA:
             sign = "+" if total_pnl >= 0 else ""
             lines.append(f"\n💰 합계: ${total_invested:,.0f} → ${total_value:,.0f} ({sign}${total_pnl:,.0f})")
 
-        # 마지막 매수 시간
         if last_time:
-            lines.append(f"\n🕐 마지막 매수: {last_time}")
+            lines.append(f"\n🕐 마지막 DCA: {last_time}")
+        if last_bonus:
+            lines.append(f"🎁 마지막 보너스: {last_bonus}")
 
         return "\n".join(lines)
 
