@@ -295,6 +295,10 @@ class SpotDCA:
 
         results = self._do_buy(total_amount, "dca")
 
+        if not results:
+            logger.warning("[DCA] 매수 실패 → 다음 체크에서 재시도")
+            return
+
         self.state["last_dca_time"] = datetime.utcnow().isoformat()
         self._save_state()
 
