@@ -9,6 +9,7 @@ from telegram import Update, Bot, InputFile, InlineKeyboardButton, InlineKeyboar
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from src.config import settings
+from src.strategy import fmt_price
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +85,10 @@ class TelegramNotifier:
 {emoji} <b>{side.upper()} 진입</b>
 
 코인: {short_sym}
-가격: ${price:,.2f}
+가격: {fmt_price(price)}
 수량: {qty:.4f}
-손절: ${sl:,.2f} (-{sl_pct:.1f}%)
-익절: ${tp:,.2f} (+{tp_pct:.1f}%)
+손절: {fmt_price(sl)} (-{sl_pct:.1f}%)
+익절: {fmt_price(tp)} (+{tp_pct:.1f}%)
 """
         self.send_sync(text.strip())
 
@@ -102,8 +103,8 @@ class TelegramNotifier:
 
 코인: {short_sym}
 방향: {side.upper()}
-진입가: ${entry:,.2f}
-청산가: ${exit_price:,.2f}
+진입가: {fmt_price(entry)}
+청산가: {fmt_price(exit_price)}
 수익: {sign}{pnl_pct:.1f}% ({sign}${pnl_usd:.2f})
 사유: {reason}
 """
@@ -1290,18 +1291,18 @@ class TelegramBot:
                             tp_dist = 0
 
                         text += f"\n{emoji} <b>{short_sym}</b> {p['side'].upper()} (x{leverage})"
-                        text += f"\n┌ 진입: <code>${entry:,.2f}</code>"
+                        text += f"\n┌ 진입: <code>{fmt_price(entry)}</code>"
                         if current > 0:
-                            text += f" → 현재: <code>${current:,.2f}</code>"
+                            text += f" → 현재: <code>{fmt_price(current)}</code>"
                         text += f"\n├ 가격변동: <code>{price_sign}{price_change:.2f}%</code>"
                         text += f"\n├ {pnl_emoji} 수익률: <code>{pnl_sign}{pnl_pct:.1f}%</code> ({pnl_sign}${pnl_usd:.2f})"
                         text += f"\n├ 수량: <code>{size:.4f}</code>"
                         if sl > 0:
                             sl_emoji = "🟡" if sl_dist > 0 else "🔴"
-                            text += f"\n├ {sl_emoji} 손절: <code>${sl:,.2f}</code> ({sl_dist:+.1f}%)"
+                            text += f"\n├ {sl_emoji} 손절: <code>{fmt_price(sl)}</code> ({sl_dist:+.1f}%)"
                         if tp > 0:
                             tp_emoji = "🟡" if tp_dist > 0 else "🟢"
-                            text += f"\n└ {tp_emoji} 익절: <code>${tp:,.2f}</code> ({tp_dist:+.1f}%)"
+                            text += f"\n└ {tp_emoji} 익절: <code>{fmt_price(tp)}</code> ({tp_dist:+.1f}%)"
                         text += "\n"
             else:
                 text = "📋 <b>포지션</b>\n\n현재 보유중인 포지션이 없습니다"
@@ -1421,7 +1422,7 @@ class TelegramBot:
 
                         text += f"\n{emoji} {side_emoji} <b>{short_sym}</b> {side.upper()}"
                         if entry > 0 and exit_p > 0:
-                            text += f"\n   ${entry:,.0f} → ${exit_p:,.0f}"
+                            text += f"\n   {fmt_price(entry)} → {fmt_price(exit_p)}"
                         text += f"\n   {pnl_sign}{pnl_pct:.1f}% (<code>{pnl_sign}${pnl_usd:.2f}</code>)"
                         if reason:
                             text += f" | {reason}"
@@ -1675,19 +1676,19 @@ class TelegramBot:
 
                 emoji = "📈" if side == "long" else "📉"
                 text += f"\n{emoji} <b>{short_sym}</b> {side.upper()}"
-                text += f"\n├ 진입: <code>${entry:,.2f}</code>"
+                text += f"\n├ 진입: <code>{fmt_price(entry)}</code>"
                 if current > 0:
-                    text += f" → 현재: <code>${current:,.2f}</code>"
+                    text += f" → 현재: <code>{fmt_price(current)}</code>"
 
                 if sl > 0:
                     sl_dist = abs(sl - entry) / entry * 100
-                    text += f"\n├ 🛑 손절: <code>${sl:,.2f}</code> ({sl_dist:.2f}%)"
+                    text += f"\n├ 🛑 손절: <code>{fmt_price(sl)}</code> ({sl_dist:.2f}%)"
                 else:
                     text += f"\n├ 🛑 손절: <code>미설정</code>"
 
                 if tp > 0:
                     tp_dist = abs(tp - entry) / entry * 100
-                    text += f"\n└ 🎯 익절: <code>${tp:,.2f}</code> ({tp_dist:.2f}%)"
+                    text += f"\n└ 🎯 익절: <code>{fmt_price(tp)}</code> ({tp_dist:.2f}%)"
                 else:
                     text += f"\n└ 🎯 익절: <code>미설정</code>"
 

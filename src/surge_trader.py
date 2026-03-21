@@ -27,7 +27,7 @@ from src.bybit_client import BybitClient
 from src.data_fetcher import DataFetcher
 from src.live_surge_mirror_short import MirrorShortParams, overheat_confirmed
 from src.telegram_bot import TelegramNotifier, TelegramBot
-from src.strategy import MAJOR_COINS, STABLECOINS
+from src.strategy import MAJOR_COINS, STABLECOINS, fmt_price as _fmt_price
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +280,7 @@ class SurgeTrader:
                         self.positions.pop(symbol, None)
                 else:
                     # 이 봇이 열지 않은 포지션은 무시
-                    logger.info(f"다른 전략 포지션 무시: {symbol} (side={side}, entry=${entry_price:.4f})")
+                    logger.info(f"다른 전략 포지션 무시: {symbol} (side={side}, entry={_fmt_price(entry_price)})")
 
             if self.positions:
                 logger.info(f"이 봇 관리 포지션 {len(self.positions)}개 동기화 완료")
@@ -579,7 +579,7 @@ class SurgeTrader:
             logger.warning("주문 수량이 0 이하입니다.")
             return 0.0
 
-        logger.info(f"[ENTRY] {symbol} {side.upper()} | Price=${price:.4f}, Qty={qty}, SL=${stop_loss:.4f}")
+        logger.info(f"[ENTRY] {symbol} {side.upper()} | Price={_fmt_price(price)}, Qty={qty}, SL={_fmt_price(stop_loss)}")
 
         if not self.paper:
             try:
@@ -606,7 +606,7 @@ class SurgeTrader:
                 trail_dist = round(price * self.params['trail_rebound_pct'] / 100, 4)
                 active_price = price * (1 - self.params['trail_start_pct'] / 100)
                 self.client.set_trailing_stop(symbol, trail_dist, active_price)
-                logger.info(f"[TRAILING] {symbol} 거래소 트레일링 설정 (거리: ${trail_dist}, 활성화: ${active_price:.4f})")
+                logger.info(f"[TRAILING] {symbol} 거래소 트레일링 설정 (거리: {_fmt_price(trail_dist)}, 활성화: {_fmt_price(active_price)})")
             except Exception as e:
                 logger.warning(f"[TRAILING] {symbol} 거래소 트레일링 설정 실패 (봇 체크로 대체): {e}")
 
@@ -634,13 +634,13 @@ class SurgeTrader:
         short_sym = symbol.split('/')[0]
         message = (
             f"📉 <b>미러숏 진입: {short_sym}</b>\n\n"
-            f"진입가: ${price:.4f}\n"
+            f"진입가: {_fmt_price(price)}\n"
             f"수량: {qty}\n"
             f"레버리지: {self.params['leverage']}x\n\n"
             f"📊 과열 시그널\n"
             f"거래량: {vol_ratio:.1f}배\n"
             f"가격 상승: +{price_change:.1f}%\n\n"
-            f"손절: ${stop_loss:.4f} (+{self.params['sl_pct']}%)\n"
+            f"손절: {_fmt_price(stop_loss)} (+{self.params['sl_pct']}%)\n"
             f"트레일링: {self.params['trail_start_pct']}% 하락 시 활성화 → {self.params['trail_rebound_pct']}% 반등 청산 (거래소)"
         )
         self.notifier.send_sync(message)
@@ -663,7 +663,7 @@ class SurgeTrader:
         price = exit_info["price"]
         reason = exit_info["reason"]
 
-        logger.info(f"[EXIT] {symbol} | Reason={reason}, Price=${price:.4f}")
+        logger.info(f"[EXIT] {symbol} | Reason={reason}, Price={_fmt_price(price)}")
 
         if not self.paper:
             try:
@@ -690,8 +690,8 @@ class SurgeTrader:
         emoji = "💰" if pnl_pct >= 0 else "💸"
         message = (
             f"{emoji} <b>청산: {short_sym}</b>\n\n"
-            f"진입가: ${entry:.4f}\n"
-            f"청산가: ${price:.4f}\n"
+            f"진입가: {_fmt_price(entry)}\n"
+            f"청산가: {_fmt_price(price)}\n"
             f"사유: {reason}\n\n"
             f"수익률: {pnl_pct:+.2f}%\n"
             f"수익: ${pnl_usd:+.2f}\n\n"
@@ -753,7 +753,7 @@ class SurgeTrader:
             if current_price < pos['lowest']:
                 pos['lowest'] = current_price
                 pos['trail_stop'] = current_price * (1 + trail_rebound_pct / 100)
-                logger.debug(f"[TRAIL] {symbol} trail_stop 업데이트: ${pos['trail_stop']:.4f}")
+                logger.debug(f"[TRAIL] {symbol} trail_stop 업데이트: {_fmt_price(pos['trail_stop'])}")
 
             # 리바운드 시 청산
             if pos.get('trail_stop') and current_price >= pos['trail_stop']:

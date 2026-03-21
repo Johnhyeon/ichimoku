@@ -11,6 +11,24 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
+def fmt_price(price: float) -> str:
+    """가격에 맞는 소수점 자릿수로 포맷 (잡코인 대응)."""
+    if price <= 0:
+        return "$0"
+    if price >= 100:
+        return f"${price:,.2f}"
+    if price >= 1:
+        return f"${price:.4f}"
+    s = f"{price:.10f}"
+    dot = s.index('.')
+    first_sig = dot + 1
+    while first_sig < len(s) and s[first_sig] == '0':
+        first_sig += 1
+    decimals = (first_sig - dot - 1) + 4
+    return f"${price:.{decimals}f}"
+
+
 # 스테이블코인 + 페그 토큰 제외 목록 (전체 스캔 시 공용)
 STABLECOINS = {
     # USD 페그

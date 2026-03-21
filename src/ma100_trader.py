@@ -22,10 +22,11 @@ import pandas as pd
 
 from src.bybit_client import BybitClient
 from src.data_fetcher import DataFetcher
-from src.strategy import STABLECOINS
+from src.strategy import STABLECOINS, fmt_price as _fmt_price
 from src.telegram_bot import TelegramNotifier, TelegramBot
 
 logger = logging.getLogger(__name__)
+
 
 MA100_PARAMS = {
     'ma_period': 100,
@@ -343,7 +344,7 @@ class MA100Trader:
             pending_dca.append({"price": dca_price, "size": tranche_sizes[i]})
 
         dca_desc = ":".join(str(r) for r in dca_ratios)
-        logger.info(f"[MA100 ENTRY] {symbol} {side.upper()} | Price=${price:.4f}, Qty={first_qty}/{total_qty} (DCA {dca_desc}), SL=${stop_loss:.4f}")
+        logger.info(f"[MA100 ENTRY] {symbol} {side.upper()} | Price={_fmt_price(price)}, Qty={first_qty}/{total_qty} (DCA {dca_desc}), SL={_fmt_price(stop_loss)}")
 
         if not self.paper:
             try:
@@ -375,6 +376,19 @@ class MA100Trader:
             except Exception as e:
                 logger.warning(f"MA100 트레일링 스톱 설정 실패 (봇 체크로 대체): {e}")
 
+            # DCA 지정가 주문 등록
+            dca_order_ids = []
+            for j, dca in enumerate(pending_dca):
+                try:
+                    dca_order = self.client.limit_order(
+                        symbol, order_side, dca["size"], dca["price"]
+                    )
+                    dca["order_id"] = dca_order["id"]
+                    dca_order_ids.append(dca_order["id"])
+                    logger.info(f"[MA100 DCA] {symbol} {j+2}차 지정가 등록: {dca['size']} @ {_fmt_price(dca['price'])} (id={dca_order['id']})")
+                except Exception as e:
+                    logger.error(f"MA100 DCA {j+2}차 지정가 주문 실패 ({symbol}): {e}")
+
         # 포지션 상태 업데이트
         self.positions[symbol] = {
             "symbol": symbol,
@@ -404,20 +418,20 @@ class MA100Trader:
         dca_info = ""
         if len(dca_ratios) > 1:
             dca_info = f"\n\n📊 분할매수 ({dca_desc})\n"
-            dca_info += f"1차: {first_qty} @ ${price:.4f}\n"
+            dca_info += f"1차: {first_qty} @ {_fmt_price(price)}\n"
             for j, dca in enumerate(pending_dca):
-                dca_info += f"{j+2}차: {dca['size']} @ ${dca['price']:.4f} (대기)\n"
+                dca_info += f"{j+2}차: {dca['size']} @ {_fmt_price(dca['price'])} (대기)\n"
 
         message = (
             f"{side_emoji} <b>MA100 진입: {short_sym}</b>\n\n"
             f"방향: {side.upper()}\n"
-            f"진입가: ${price:.4f}\n"
+            f"진입가: {_fmt_price(price)}\n"
             f"수량: {first_qty} (전체 {total_qty})\n"
             f"레버리지: {self.params['leverage']}x\n\n"
             f"📊 시그널 정보\n"
-            f"MA100: ${ma100_val:.4f}\n"
+            f"MA100: {_fmt_price(ma100_val)}\n"
             f"기울기: {slope:.3f}%\n\n"
-            f"손절: ${stop_loss:.4f} ({self.params['sl_pct']}%)\n"
+            f"손절: {_fmt_price(stop_loss)} ({self.params['sl_pct']}%)\n"
             f"트레일링: {self.params['trail_start_pct']}% 수익 시 활성화 → {self.params['trail_pct']}% 되돌림 청산 (거래소)"
             f"{dca_info}"
         )
@@ -440,9 +454,16 @@ class MA100Trader:
         price = exit_info["price"]
         reason = exit_info["reason"]
 
-        logger.info(f"[MA100 EXIT] {symbol} | Reason={reason}, Price=${price:.4f}")
+        logger.info(f"[MA100 EXIT] {symbol} | Reason={reason}, Price={_fmt_price(price)}")
 
         if not self.paper:
+            # 미체결 DCA 지정가 주문 취소
+            pending = pos.get("pending_dca", [])
+            if pending:
+                cancelled = self.client.cancel_all_orders(symbol)
+                if cancelled > 0:
+                    logger.info(f"[MA100] {symbol} DCA 미체결 주문 {cancelled}건 취소")
+
             try:
                 order_side = "sell" if side == "long" else "buy"
                 self.client.market_order(symbol, order_side, qty)
@@ -464,8 +485,8 @@ class MA100Trader:
         emoji = "💰" if pnl_pct >= 0 else "💸"
         message = (
             f"{emoji} <b>MA100 청산: {short_sym}</b>\n\n"
-            f"진입가: ${entry:.4f}\n"
-            f"청산가: ${price:.4f}\n"
+            f"진입가: {_fmt_price(entry)}\n"
+            f"청산가: {_fmt_price(price)}\n"
             f"사유: {reason}\n\n"
             f"수익률: {pnl_pct:+.2f}%\n"
             f"수익: ${pnl_usd:+.2f}"
@@ -521,8 +542,8 @@ class MA100Trader:
         except Exception as e:
             logger.warning(f"[MA100] {symbol} 트레일링 스톱 보완 실패: {e}")
 
-    def _process_dca(self, symbol: str, current_price: float):
-        """현재가 기준 DCA 주문 체결 처리"""
+    def _check_dca_fills(self, symbol: str):
+        """DCA 지정가 주문 체결 여부 확인 및 평균단가/SL 업데이트"""
         pos = self.positions.get(symbol)
         if not pos:
             return
@@ -535,38 +556,41 @@ class MA100Trader:
         filled_new = []
         remaining = []
 
-        for dca in pending:
-            if side == "short" and current_price >= dca["price"]:
-                filled_new.append(dca)
-            elif side == "long" and current_price <= dca["price"]:
-                filled_new.append(dca)
-            else:
-                remaining.append(dca)
+        if self.paper:
+            # 페이퍼: 기존 로직 (현재가 비교)
+            try:
+                ticker = self.client.exchange.fetch_ticker(symbol)
+                current_price = float(ticker['last'])
+            except Exception:
+                return
+            for dca in pending:
+                if side == "short" and current_price >= dca["price"]:
+                    filled_new.append(dca)
+                elif side == "long" and current_price <= dca["price"]:
+                    filled_new.append(dca)
+                else:
+                    remaining.append(dca)
+        else:
+            # 실전: 거래소 미체결 주문 확인
+            open_orders = self.client.get_open_orders(symbol)
+            open_ids = {o["id"] for o in open_orders}
+            for dca in pending:
+                order_id = dca.get("order_id")
+                if order_id and order_id not in open_ids:
+                    # 주문이 사라짐 = 체결됨
+                    filled_new.append(dca)
+                else:
+                    remaining.append(dca)
 
         if not filled_new:
             return
 
         short_sym = symbol.split('/')[0]
 
-        # 거래소에 추가 주문 실행
         for dca in filled_new:
-            dca_qty = dca["size"]
-            dca_price = dca["price"]
-
-            logger.info(f"[MA100 DCA] {short_sym} 분할매수 체결 @ ${current_price:.4f} (계획가: ${dca_price:.4f}, 수량: {dca_qty})")
-
-            if not self.paper:
-                try:
-                    order_side = "buy" if side == "long" else "sell"
-                    self.client.market_order(symbol, order_side, dca_qty)
-                except Exception as e:
-                    logger.error(f"MA100 DCA 주문 실패 ({symbol}): {e}")
-                    remaining.append(dca)  # 실패하면 다시 대기열로
-                    continue
-
-            # 체결 기록
+            logger.info(f"[MA100 DCA] {short_sym} 분할매수 체결 @ {_fmt_price(dca['price'])} (수량: {dca['size']})")
             entries = pos.get("filled_entries", [])
-            entries.append({"price": current_price, "size": dca_qty})
+            entries.append({"price": dca["price"], "size": dca["size"]})
             pos["filled_entries"] = entries
 
         # 평균단가 재계산
@@ -598,9 +622,9 @@ class MA100Trader:
         self.notifier.send_sync(
             f"📊 <b>MA100 분할매수: {short_sym}</b>\n\n"
             f"체결: {n_filled}/{n_total}차\n"
-            f"평균단가: ${old_entry:.4f} → ${avg_price:.4f}\n"
+            f"평균단가: {_fmt_price(old_entry)} → {_fmt_price(avg_price)}\n"
             f"총수량: {total_size}\n"
-            f"새 손절가: ${pos['stop_loss']:.4f}"
+            f"새 손절가: {_fmt_price(pos['stop_loss'])}"
         )
 
         self._save_state()
@@ -613,8 +637,8 @@ class MA100Trader:
 
         current_price = float(df.iloc[-1]['close'])
 
-        # DCA 체결 먼저 처리
-        self._process_dca(symbol, current_price)
+        # DCA 체결 확인
+        self._check_dca_fills(symbol)
 
         # DCA 후 업데이트된 값 사용
         entry_price = float(pos['entry_price'])
@@ -747,6 +771,13 @@ class MA100Trader:
                 short_sym = symbol.split('/')[0]
                 logger.info(f"[MA100 MANUAL CLOSE] {short_sym} 수동 청산 감지 | PnL: {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
 
+                # 미체결 DCA 지정가 주문 취소
+                pending = pos.get("pending_dca", [])
+                if pending:
+                    cancelled = self.client.cancel_all_orders(symbol)
+                    if cancelled > 0:
+                        logger.info(f"[MA100] {symbol} DCA 미체결 주문 {cancelled}건 취소")
+
                 self.notifier.notify_exit(symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason)
 
                 self.trade_history.append({
@@ -860,7 +891,7 @@ class MA100Trader:
     # ==================== 메인 실행 ====================
 
     def check_positions(self):
-        """포지션 상태만 체크 (수동/거래소 청산 감지 + 트레일링 + DCA). 자주 호출용."""
+        """포지션 상태만 체크 (수동/거래소 청산 감지 + 트레일링 + DCA 체결 확인). 자주 호출용."""
         if not self.positions:
             return
 
@@ -869,15 +900,13 @@ class MA100Trader:
         for symbol in list(self.positions.keys()):
             self._ensure_trailing_stop(symbol)
 
-            # DCA 대기 주문 실시간 체크
+            # DCA 지정가 주문 체결 여부 확인
             pos = self.positions.get(symbol)
             if pos and pos.get("pending_dca"):
                 try:
-                    ticker = self.client.exchange.fetch_ticker(symbol)
-                    current_price = float(ticker['last'])
-                    self._process_dca(symbol, current_price)
+                    self._check_dca_fills(symbol)
                 except Exception as e:
-                    logger.debug(f"MA100 DCA 가격 조회 실패 ({symbol}): {e}")
+                    logger.debug(f"MA100 DCA 체결 확인 실패 ({symbol}): {e}")
 
     def run_once(self):
         """일봉 갱신 시 전체 스캔 + 시그널 진입"""
@@ -953,7 +982,7 @@ class MA100Trader:
                     info = signal['signal_info']
                     logger.info(
                         f"[MA100 SIGNAL] {symbol} {signal['side'].upper()} | "
-                        f"Slope={info['slope']:.3f}% MA100=${info['ma100']:.4f}"
+                        f"Slope={info['slope']:.3f}% MA100={_fmt_price(info['ma100'])}"
                     )
             except Exception as e:
                 logger.debug(f"MA100 스캔 실패 ({symbol}): {e}")

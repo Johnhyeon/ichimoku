@@ -156,6 +156,76 @@ class BybitClient:
             logger.error(f"포지션 조회 실패: {e}")
             raise
 
+    def limit_order(self, symbol: str, side: str, amount: float, price: float) -> dict:
+        """지정가 주문"""
+        try:
+            order = self.exchange.create_order(
+                symbol=symbol,
+                type='limit',
+                side=side,
+                amount=amount,
+                price=price,
+            )
+            logger.info(f"지정가 주문 등록: {side} {amount} {symbol} @ {price}")
+            return {
+                "id": order['id'],
+                "symbol": order['symbol'],
+                "side": order['side'],
+                "amount": float(order['amount'] or 0),
+                "price": float(order['price'] or 0),
+                "status": order['status']
+            }
+        except Exception as e:
+            logger.error(f"지정가 주문 실패: {e}")
+            raise
+
+    def cancel_order(self, symbol: str, order_id: str) -> bool:
+        """주문 취소"""
+        try:
+            self.exchange.cancel_order(order_id, symbol)
+            logger.info(f"주문 취소: {order_id} ({symbol})")
+            return True
+        except Exception as e:
+            logger.error(f"주문 취소 실패: {e}")
+            return False
+
+    def cancel_all_orders(self, symbol: str) -> int:
+        """심볼의 모든 미체결 주문 취소"""
+        try:
+            orders = self.exchange.fetch_open_orders(symbol)
+            cancelled = 0
+            for order in orders:
+                try:
+                    self.exchange.cancel_order(order['id'], symbol)
+                    cancelled += 1
+                except Exception:
+                    pass
+            logger.info(f"미체결 주문 {cancelled}건 취소 ({symbol})")
+            return cancelled
+        except Exception as e:
+            logger.error(f"전체 주문 취소 실패: {e}")
+            return 0
+
+    def get_open_orders(self, symbol: str) -> list:
+        """미체결 주문 조회"""
+        try:
+            orders = self.exchange.fetch_open_orders(symbol)
+            return [
+                {
+                    "id": o['id'],
+                    "symbol": o['symbol'],
+                    "side": o['side'],
+                    "amount": float(o['amount'] or 0),
+                    "price": float(o['price'] or 0),
+                    "status": o['status'],
+                    "type": o['type'],
+                }
+                for o in orders
+            ]
+        except Exception as e:
+            logger.error(f"미체결 주문 조회 실패: {e}")
+            return []
+
     def market_order(self, symbol: str, side: str, amount: float) -> dict:
         """시장가 주문"""
         try:
