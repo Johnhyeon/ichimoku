@@ -204,7 +204,7 @@ class SpotDCA:
                 ticker = self.client.get_ticker(f"{asset}/USDT:USDT")
                 price = ticker['last']
                 qty = usdt_amount / price
-                logger.info(f"[DCA][PAPER] {asset} 매수: ${usdt_amount:.2f} @ ${price:,.2f} = {qty:.6f}")
+                logger.info(f"[DCA][PAPER] {asset} 매수: ${usdt_amount:.2f} @ ${price:,.2f} = {qty:.8f}")
                 return {
                     'symbol': symbol,
                     'side': 'buy',
@@ -365,7 +365,7 @@ class SpotDCA:
             price = result.get('price', 0)
             cost = result.get('cost', 0)
             text += f"{'₿' if asset == 'BTC' else 'Ξ'} <b>{asset}</b>: "
-            text += f"${cost:.2f} @ ${price:,.2f} = {qty:.6f}\n"
+            text += f"${cost:.2f} @ ${price:,.2f} = {qty:.8f}\n"
 
         text += f"\n💵 이번 총액: <code>${total_amount:.2f}</code>\n"
 
@@ -380,7 +380,7 @@ class SpotDCA:
             avg_price = total_inv / total_qty if total_qty > 0 else 0
             emoji = "₿" if asset == "BTC" else "Ξ"
             text += (
-                f"{emoji} {asset}: {total_qty:.6f} "
+                f"{emoji} {asset}: {total_qty:.8f} "
                 f"(${total_inv:.2f}, {count}회, 평균 ${avg_price:,.2f})\n"
             )
 
@@ -411,12 +411,12 @@ class SpotDCA:
                 pnl_pct = (pnl / total_inv * 100) if total_inv > 0 else 0
                 pnl_sign = "+" if pnl >= 0 else ""
                 lines.append(
-                    f"{emoji} {asset}: {total_qty:.6f} "
+                    f"{emoji} {asset}: {total_qty:.8f} "
                     f"(평균${avg_price:,.0f}, {pnl_sign}{pnl_pct:.1f}%)"
                 )
             except Exception:
                 lines.append(
-                    f"{emoji} {asset}: {total_qty:.6f} "
+                    f"{emoji} {asset}: {total_qty:.8f} "
                     f"(${total_inv:.2f}, {count}회)"
                 )
 
@@ -481,13 +481,13 @@ class SpotDCA:
                 sign = "+" if pnl >= 0 else ""
                 lines.append(
                     f"{emoji} <b>{asset}</b>\n"
-                    f"  보유: {qty:.6f} ({count}회 매수)\n"
+                    f"  보유: {qty:.8f} ({count}회 매수)\n"
                     f"  평균단가: ${avg:,.0f}\n"
                     f"  투자: ${inv:,.0f} → 평가: ${val:,.0f} ({sign}{pnl_pct:.1f}%)"
                 )
             except Exception:
                 lines.append(
-                    f"{emoji} <b>{asset}</b>: {qty:.6f} (${inv:,.0f}, {count}회)"
+                    f"{emoji} <b>{asset}</b>: {qty:.8f} (${inv:,.0f}, {count}회)"
                 )
 
         if total_invested > 0:
