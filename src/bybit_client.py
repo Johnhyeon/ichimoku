@@ -615,6 +615,39 @@ class BybitClient:
             logger.error(f"트레일링 스톱 설정 실패: {e}")
             return False
 
+    def set_stop_loss(self, symbol: str, stop_loss: float) -> bool:
+        """포지션의 손절가(SL) 변경
+
+        Args:
+            symbol: 심볼 (예: "BTC/USDT:USDT")
+            stop_loss: 새 손절가 (0이면 SL 취소)
+
+        Returns:
+            성공 여부
+        """
+        try:
+            bybit_symbol = symbol.replace('/USDT:USDT', 'USDT')
+
+            params = {
+                'category': 'linear',
+                'symbol': bybit_symbol,
+                'positionIdx': 0,
+                'stopLoss': str(stop_loss),
+            }
+
+            response = self.exchange.privatePostV5PositionTradingStop(params)
+
+            if response and response.get('retCode') == 0:
+                logger.info(f"SL 변경: {symbol} → ${stop_loss}")
+                return True
+            else:
+                logger.error(f"SL 변경 실패: {response}")
+                return False
+
+        except Exception as e:
+            logger.error(f"SL 변경 실패 ({symbol}): {e}")
+            return False
+
     def _fetch_closed_pnl_chunked(self, days: int, limit_per_page: int = 100) -> list:
         """7일 단위 청크로 closedPnl 조회 (바이빗 API 7일 제한 우회)"""
         import time as _time
