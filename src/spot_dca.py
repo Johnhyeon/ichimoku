@@ -26,9 +26,9 @@ KST = timezone(timedelta(hours=9))
 DCA_PARAMS = {
     'enabled': True,
     'interval_hours': 8,          # DCA 주기
-    'base_amount_usdt': 10.0,     # 기본 매수액
-    'btc_ratio': 0.4,             # BTC 40%
-    'eth_ratio': 0.6,             # ETH 60%
+    'base_amount_usdt': 12.0,     # 기본 매수액
+    'btc_ratio': 0.5,             # BTC 50%
+    'eth_ratio': 0.5,             # ETH 50%
     'weekly_bonus_pct': 0.10,     # 주간 선물 수익의 10%를 보너스 매수
     'weekly_bonus_day': 6,        # 0=월 ... 6=일 (일요일)
     'weekly_bonus_hour_kst': 0,   # KST 기준 시간 (00시)
