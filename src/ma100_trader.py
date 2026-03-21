@@ -209,6 +209,8 @@ class MA100Trader:
 
             if self.positions:
                 logger.info(f"MA100 관리 포지션 {len(self.positions)}개 동기화 완료")
+                # 미체결 DCA 지정가 주문 복원
+                self._restore_dca_orders()
             else:
                 logger.info("MA100 관리 중인 포지션 없음")
 
@@ -216,6 +218,42 @@ class MA100Trader:
 
         except Exception as e:
             logger.error(f"MA100 포지션 동기화 실패: {e}")
+
+    def _restore_dca_orders(self):
+        """재시작 시 미체결 DCA 지정가 주문 복원"""
+        if self.paper:
+            return
+
+        for symbol, pos in self.positions.items():
+            pending = pos.get("pending_dca")
+            if not pending:
+                continue
+
+            side = pos["side"]
+            order_side = "buy" if side == "long" else "sell"
+            short_sym = symbol.split('/')[0]
+
+            # 거래소에 이미 걸린 주문 확인
+            open_orders = self.client.get_open_orders(symbol)
+            open_prices = {round(o["price"], 10) for o in open_orders}
+
+            for j, dca in enumerate(pending):
+                # order_id가 있고 거래소에도 있으면 스킵
+                if dca.get("order_id"):
+                    open_ids = {o["id"] for o in open_orders}
+                    if dca["order_id"] in open_ids:
+                        logger.info(f"[MA100 DCA] {short_sym} {j+2}차 이미 등록됨 (id={dca['order_id']})")
+                        continue
+
+                # 지정가 주문 등록
+                try:
+                    order = self.client.limit_order(
+                        symbol, order_side, dca["size"], dca["price"]
+                    )
+                    dca["order_id"] = order["id"]
+                    logger.info(f"[MA100 DCA] {short_sym} {j+2}차 지정가 복원: {dca['size']} @ {_fmt_price(dca['price'])} (id={order['id']})")
+                except Exception as e:
+                    logger.error(f"MA100 DCA {j+2}차 지정가 복원 실패 ({symbol}): {e}")
 
     # ==================== 데이터 조회 ====================
 
