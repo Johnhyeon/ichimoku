@@ -366,11 +366,31 @@ class BybitClient:
                     'marketUnit': 'quoteCoin',
                 },
             )
+            logger.debug(f"스팟 매수 원본 응답: {order}")
+
             price = float(order.get('average') or order.get('price') or 0)
             filled = float(order.get('filled') or order.get('amount') or 0)
-            cost = float(order.get('cost') or (price * filled) or amount_usdt)
+            cost = float(order.get('cost') or 0)
 
-            logger.info(f"스팟 매수 체결: {symbol} ${amount_usdt:.2f} @ ${price:,.2f}")
+            # 시장가 주문은 즉시 체결되지만 응답에 체결 정보가 없을 수 있음
+            if price == 0 or filled == 0:
+                import time
+                time.sleep(0.5)
+                try:
+                    fetched = self.exchange.fetch_order(order['id'], symbol, params={'type': 'spot'})
+                    logger.debug(f"스팟 매수 fetch_order 응답: {fetched}")
+                    price = float(fetched.get('average') or fetched.get('price') or 0)
+                    filled = float(fetched.get('filled') or fetched.get('amount') or 0)
+                    cost = float(fetched.get('cost') or 0)
+                except Exception as e2:
+                    logger.warning(f"스팟 매수 체결 조회 실패: {e2}")
+
+            if cost == 0 and price > 0 and filled > 0:
+                cost = price * filled
+            if cost == 0:
+                cost = amount_usdt
+
+            logger.info(f"스팟 매수 체결: {symbol} ${cost:.2f} @ ${price:,.2f} = {filled:.8f}")
             return {
                 'id': order['id'],
                 'symbol': symbol,
@@ -378,7 +398,7 @@ class BybitClient:
                 'amount': filled,
                 'price': price,
                 'cost': cost,
-                'status': order['status'],
+                'status': order.get('status', 'closed'),
             }
         except Exception as e:
             logger.error(f"스팟 매수 실패: {e}")
