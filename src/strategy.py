@@ -185,31 +185,31 @@ def check_exit_signal(
     if side == "long":
         # MaxLoss: -4% (레버리지 20배 기준 -80%)
         max_loss_price = entry * 0.98
-        if low <= max_loss_price:
-            return {"action": "close", "reason": "MaxLoss", "price": max_loss_price}
+        if price <= max_loss_price:
+            return {"action": "close", "reason": "MaxLoss", "price": price}
 
         # 최고가 갱신 및 트레일링
         highest = float(pos.get("highest", entry))
-        if high > highest:
-            highest = high
+        if price > highest:
+            highest = price
             pos["highest"] = highest
-            if high >= take_profit:
+            if price >= take_profit:
                 trailing = True
-                trail_stop = max(trail_stop, high * (1 - params["trail_pct"] / 100))
+                trail_stop = max(trail_stop, price * (1 - params["trail_pct"] / 100))
                 pos["trailing"] = True
                 pos["trail_stop"] = trail_stop
 
         # 1. 손절
-        if low <= stop_loss:
-            return {"action": "close", "reason": "Stop", "price": max(stop_loss, low)}
+        if price <= stop_loss:
+            return {"action": "close", "reason": "Stop", "price": price}
 
         # 2. 트레일링
-        if trailing and low <= trail_stop:
-            return {"action": "close", "reason": "Trail", "price": trail_stop}
+        if trailing and price <= trail_stop:
+            return {"action": "close", "reason": "Trail", "price": price}
 
         # 3. TP (트레일링 없을 때)
-        if not trailing and high >= take_profit:
-            return {"action": "close", "reason": "TP", "price": take_profit}
+        if not trailing and price >= take_profit:
+            return {"action": "close", "reason": "TP", "price": price}
 
         # 4. 구름 진입
         if bool(row["in_cloud"]) or bool(row["below_cloud"]):
@@ -218,30 +218,30 @@ def check_exit_signal(
     else:  # short
         # MaxLoss: +4%
         max_loss_price = entry * 1.02
-        if high >= max_loss_price:
-            return {"action": "close", "reason": "MaxLoss", "price": max_loss_price}
+        if price >= max_loss_price:
+            return {"action": "close", "reason": "MaxLoss", "price": price}
 
         lowest = float(pos.get("lowest", entry))
-        if low < lowest:
-            lowest = low
+        if price < lowest:
+            lowest = price
             pos["lowest"] = lowest
-            if low <= take_profit:
+            if price <= take_profit:
                 trailing = True
-                trail_stop = min(trail_stop, low * (1 + params["trail_pct"] / 100))
+                trail_stop = min(trail_stop, price * (1 + params["trail_pct"] / 100))
                 pos["trailing"] = True
                 pos["trail_stop"] = trail_stop
 
         # 1. 손절
-        if high >= stop_loss:
-            return {"action": "close", "reason": "Stop", "price": min(stop_loss, high)}
+        if price >= stop_loss:
+            return {"action": "close", "reason": "Stop", "price": price}
 
         # 2. 트레일링
-        if trailing and high >= trail_stop:
-            return {"action": "close", "reason": "Trail", "price": trail_stop}
+        if trailing and price >= trail_stop:
+            return {"action": "close", "reason": "Trail", "price": price}
 
         # 3. TP
-        if not trailing and low <= take_profit:
-            return {"action": "close", "reason": "TP", "price": take_profit}
+        if not trailing and price <= take_profit:
+            return {"action": "close", "reason": "TP", "price": price}
 
         # 4. 구름 진입
         if bool(row["in_cloud"]) or bool(row["above_cloud"]):
