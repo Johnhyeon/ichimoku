@@ -411,6 +411,55 @@ class BybitClient:
             logger.error(f"스팟 잔고 조회 실패 ({coin}): {e}")
             return {'total': 0, 'free': 0, 'used': 0}
 
+    def internal_transfer(self, coin: str, amount: float, from_account: str, to_account: str) -> bool:
+        """내부 계좌 간 이체
+
+        Args:
+            coin: 코인 (예: "USDT")
+            amount: 이체 금액
+            from_account: 출발 계좌 ("UNIFIED" 또는 "FUND")
+            to_account: 도착 계좌 ("UNIFIED" 또는 "FUND")
+
+        Returns:
+            성공 여부
+        """
+        import uuid
+        account_map = {"UNIFIED": "UNIFIED", "FUND": "FUND"}
+        try:
+            response = self.exchange.privatePostV5AssetTransferInterTransfer({
+                'transferId': str(uuid.uuid4()),
+                'coin': coin,
+                'amount': str(amount),
+                'fromAccountType': account_map[from_account],
+                'toAccountType': account_map[to_account],
+            })
+            if response and response.get('retCode') == 0:
+                logger.info(f"내부 이체 완료: {amount} {coin} ({from_account} → {to_account})")
+                return True
+            else:
+                logger.error(f"내부 이체 실패: {response}")
+                return False
+        except Exception as e:
+            logger.error(f"내부 이체 실패: {e}")
+            return False
+
+    def get_funding_balance(self, coin: str = 'USDT') -> float:
+        """Funding 계좌 잔고 조회"""
+        try:
+            response = self.exchange.privateGetV5AssetTransferQueryAccountCoinsBalance({
+                'accountType': 'FUND',
+                'coin': coin,
+            })
+            if response and response.get('retCode') == 0:
+                coins = response.get('result', {}).get('balance', [])
+                for c in coins:
+                    if c.get('coin') == coin:
+                        return float(c.get('transferBalance', 0))
+            return 0.0
+        except Exception as e:
+            logger.error(f"Funding 잔고 조회 실패: {e}")
+            return 0.0
+
     def get_closed_pnl(self, symbol: str = None, limit: int = 50) -> list:
         """청산된 포지션의 PnL 이력 조회 (바이빗 Closed PnL API)
 

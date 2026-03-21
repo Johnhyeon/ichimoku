@@ -33,7 +33,7 @@ DCA_PARAMS = {
     'weekly_bonus_day': 6,        # 0=월 ... 6=일 (일요일)
     'weekly_bonus_hour_kst': 0,   # KST 기준 시간 (00시)
     'min_futures_reserve': 500.0, # 선물 마진 최소 유보액
-    'min_order_usdt': 5.0,        # Bybit 최소 주문
+    'min_order_usdt': 1.0,        # Bybit 스팟 최소 주문 ($1)
 }
 
 STATE_FILE = "data/dca_state.json"
@@ -159,21 +159,33 @@ class SpotDCA:
             logger.warning(f"[DCA] 주간 선물 손익 조회 실패: {e}")
             return 0.0
 
-    def _check_balance_sufficient(self, required_usdt: float) -> bool:
-        """잔고 충분한지 확인 (선물 마진 유보 고려)"""
+    def _ensure_balance(self, required_usdt: float) -> bool:
+        """DCA에 필요한 잔고 확보 (Unified 가용 → Funding 이체 순)"""
         try:
             balance = self.client.get_balance()
             free = balance.get('free', 0)
             reserve = self.params['min_futures_reserve']
-
             available = free - reserve
-            if available < required_usdt:
-                logger.warning(
-                    f"[DCA] 잔고 부족: 가용=${free:.2f}, "
-                    f"유보=${reserve:.2f}, 필요=${required_usdt:.2f}"
-                )
-                return False
-            return True
+
+            if available >= required_usdt:
+                return True
+
+            # Unified 잔고 부족 → Funding에서 이체 시도
+            shortfall = required_usdt - max(available, 0)
+            funding_bal = self.client.get_funding_balance('USDT')
+            logger.info(f"[DCA] Unified 부족 (가용=${available:.2f}), Funding=${funding_bal:.2f}")
+
+            if funding_bal >= shortfall:
+                ok = self.client.internal_transfer('USDT', shortfall, 'FUND', 'UNIFIED')
+                if ok:
+                    logger.info(f"[DCA] Funding → Unified ${shortfall:.2f} 이체 완료")
+                    return True
+
+            logger.warning(
+                f"[DCA] 잔고 부족: 필요=${required_usdt:.2f}, "
+                f"Unified 가용=${available:.2f}, Funding=${funding_bal:.2f}"
+            )
+            return False
         except Exception as e:
             logger.error(f"[DCA] 잔고 확인 실패: {e}")
             return False
@@ -270,7 +282,7 @@ class SpotDCA:
         total_amount = self.params['base_amount_usdt']
         logger.info(f"[DCA] === 기본 DCA 시작: ${total_amount:.2f} ===")
 
-        if not self._check_balance_sufficient(total_amount):
+        if not self._ensure_balance(total_amount):
             msg = (
                 f"⚠️ [DCA] 잔고 부족으로 스킵\n"
                 f"필요: ${total_amount:.2f}\n"
@@ -320,7 +332,7 @@ class SpotDCA:
             self._save_state()
             return
 
-        if not self._check_balance_sufficient(bonus_amount):
+        if not self._ensure_balance(bonus_amount):
             logger.warning(f"[DCA] 주간 보너스 잔고 부족: ${bonus_amount:.2f}")
             return
 
