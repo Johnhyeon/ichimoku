@@ -433,7 +433,7 @@ class BybitClient:
                 'fromAccountType': account_map[from_account],
                 'toAccountType': account_map[to_account],
             })
-            if response and response.get('retCode') == 0:
+            if response and str(response.get('retCode')) == '0':
                 logger.info(f"내부 이체 완료: {amount} {coin} ({from_account} → {to_account})")
                 return True
             else:
@@ -450,7 +450,7 @@ class BybitClient:
                 'accountType': 'FUND',
                 'coin': coin,
             })
-            if response and response.get('retCode') == 0:
+            if response and str(response.get('retCode')) == '0':
                 coins = response.get('result', {}).get('balance', [])
                 for c in coins:
                     if c.get('coin') == coin:
@@ -613,7 +613,7 @@ class BybitClient:
 
             response = self.exchange.privatePostV5PositionTradingStop(params)
 
-            if response and response.get('retCode') == 0:
+            if response and str(response.get('retCode')) == '0':
                 sl_str = f"SL=${stop_loss:.2f}" if stop_loss else "SL=취소"
                 tp_str = f"TP=${take_profit:.2f}" if take_profit else "TP=취소"
                 logger.info(f"SL/TP 수정 완료: {symbol} | {sl_str}, {tp_str}")
@@ -652,7 +652,7 @@ class BybitClient:
 
             response = self.exchange.privatePostV5PositionTradingStop(params)
 
-            if response and response.get('retCode') == 0:
+            if response and str(response.get('retCode')) == '0':
                 ap_str = f", 활성화가=${active_price:.4f}" if active_price else ""
                 logger.info(f"트레일링 스톱 설정: {symbol} | 거리=${trailing_stop:.4f}{ap_str}")
                 return True
@@ -686,7 +686,7 @@ class BybitClient:
 
             response = self.exchange.privatePostV5PositionTradingStop(params)
 
-            if response and response.get('retCode') == 0:
+            if response and str(response.get('retCode')) == '0':
                 logger.info(f"SL 변경: {symbol} → ${stop_loss}")
                 return True
             else:
