@@ -47,7 +47,7 @@ POSITION_PCT = 0.05  # 자산의 5%
 
 STRATEGY_PARAMS = {
     "min_cloud_thickness": 0.2,  # 최소 구름 두께 %
-    "min_sl_pct": 0.3,  # 최소 손절 거리 %
+    "min_sl_pct": 0.8,  # 최소 손절 거리 %
     "max_sl_pct": 8.0,  # 최대 손절 거리 %
     "sl_buffer": 0.2,  # 손절 버퍼 %
     "rr_ratio": 2.0,  # 손익비

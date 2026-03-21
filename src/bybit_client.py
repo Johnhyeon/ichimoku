@@ -690,8 +690,12 @@ class BybitClient:
 
             response = self.exchange.privatePostV5PositionTradingStop(params)
 
-            if response and str(response.get('retCode')) == '0':
+            ret_code = str(response.get('retCode'))
+            if ret_code == '0':
                 logger.info(f"SL 변경: {symbol} → ${stop_loss}")
+                return True
+            elif ret_code == '34040':
+                logger.debug(f"SL 변경 불필요 (동일값): {symbol}")
                 return True
             else:
                 logger.error(f"SL 변경 실패: {response}")
