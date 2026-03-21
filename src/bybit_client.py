@@ -360,7 +360,11 @@ class BybitClient:
                 type='market',
                 side='buy',
                 amount=amount_usdt,
-                params={'type': 'spot', 'createOrderType': 'spot'},
+                params={
+                    'type': 'spot',
+                    'createOrderType': 'spot',
+                    'marketUnit': 'quoteCoin',
+                },
             )
             price = float(order.get('average') or order.get('price') or 0)
             filled = float(order.get('filled') or order.get('amount') or 0)
