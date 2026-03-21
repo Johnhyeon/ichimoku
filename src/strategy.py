@@ -51,7 +51,7 @@ STRATEGY_PARAMS = {
     "max_sl_pct": 8.0,  # 최대 손절 거리 %
     "sl_buffer": 0.2,  # 손절 버퍼 %
     "rr_ratio": 2.0,  # 손익비
-    "trail_pct": 1.5,  # 트레일링 스탑 %
+    "trail_pct": 0.8,  # 트레일링 스탑 %
     "cooldown_hours": 4,  # 재진입 쿨다운
     "max_positions": 5,  # 최대 동시 포지션
     "use_btc_filter": True,  # BTC 상승 추세일 때만 숏 진입

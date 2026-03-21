@@ -38,7 +38,7 @@ MA100_PARAMS = {
     'max_margin': 500,
     'sl_pct': 5.0,
     'trail_start_pct': 3.0,
-    'trail_pct': 2.0,
+    'trail_pct': 3.0,
     'cooldown_days': 3,
     'fee_rate': 0.00055,
     # ── 분할매수 (DCA) ──
@@ -300,6 +300,22 @@ class MA100Trader:
                     logger.info(f"[MA100 SL] {short_sym} 거래소 SL 동기화: {_fmt_price(new_sl)}")
                 except Exception as e:
                     logger.warning(f"MA100 SL 거래소 업데이트 실패 ({short_sym}): {e}")
+
+        # 거래소 트레일링 스탑도 최신 파라미터로 동기화
+        for symbol, pos in self.positions.items():
+            if not self.paper:
+                try:
+                    entry_price = pos.get("entry_price", 0)
+                    side = pos["side"]
+                    trail_dist = entry_price * self.params['trail_pct'] / 100
+                    if side == "long":
+                        active_price = entry_price * (1 + self.params['trail_start_pct'] / 100)
+                    else:
+                        active_price = entry_price * (1 - self.params['trail_start_pct'] / 100)
+                    self.client.set_trailing_stop(symbol, trail_dist, active_price)
+                except Exception as e:
+                    short_sym = symbol.split('/')[0]
+                    logger.warning(f"MA100 트레일링 동기화 실패 ({short_sym}): {e}")
 
         self._save_state()
 
