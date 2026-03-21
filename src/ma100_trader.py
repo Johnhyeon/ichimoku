@@ -211,6 +211,8 @@ class MA100Trader:
                 logger.info(f"MA100 관리 포지션 {len(self.positions)}개 동기화 완료")
                 # 미체결 DCA 지정가 주문 복원
                 self._restore_dca_orders()
+                # 기존 포지션 SL을 전체 DCA 평균단가 기준으로 재계산
+                self._recalc_sl_full_dca()
             else:
                 logger.info("MA100 관리 중인 포지션 없음")
 
@@ -254,6 +256,51 @@ class MA100Trader:
                     logger.info(f"[MA100 DCA] {short_sym} {j+2}차 지정가 복원: {dca['size']} @ {_fmt_price(dca['price'])} (id={order['id']})")
                 except Exception as e:
                     logger.error(f"MA100 DCA {j+2}차 지정가 복원 실패 ({symbol}): {e}")
+
+    def _recalc_sl_full_dca(self):
+        """기존 포지션 SL을 전체 DCA 평균단가 기준으로 재계산 (재시작 시)"""
+        dca_ratios = self.params.get('dca_ratios', [1])
+        dca_interval = self.params.get('dca_interval_pct', 4.0)
+        total_ratio = sum(dca_ratios)
+        sl_pct = self.params['sl_pct'] / 100
+
+        for symbol, pos in self.positions.items():
+            side = pos["side"]
+            # 1차 진입가 = filled_entries의 첫 번째
+            entries = pos.get("filled_entries", [])
+            if not entries:
+                continue
+            first_price = entries[0]["price"]
+
+            # 전체 DCA 가중평균 계산
+            weighted_sum = 0.0
+            for i, ratio in enumerate(dca_ratios):
+                if side == "short":
+                    tranche_price = first_price * (1 + i * dca_interval / 100)
+                else:
+                    tranche_price = first_price * (1 - i * dca_interval / 100)
+                weighted_sum += tranche_price * ratio
+            avg_full = weighted_sum / total_ratio
+
+            if side == "long":
+                new_sl = avg_full * (1 - sl_pct)
+            else:
+                new_sl = avg_full * (1 + sl_pct)
+
+            old_sl = pos["stop_loss"]
+            if abs(old_sl - new_sl) / old_sl > 0.001:  # 0.1% 이상 차이
+                short_sym = symbol.split('/')[0]
+                logger.info(f"[MA100 SL] {short_sym} SL 재계산: {_fmt_price(old_sl)} → {_fmt_price(new_sl)}")
+                pos["stop_loss"] = new_sl
+
+                # 거래소 SL 업데이트
+                if not self.paper:
+                    try:
+                        self.client.set_stop_loss(symbol, new_sl)
+                    except Exception as e:
+                        logger.warning(f"MA100 SL 거래소 업데이트 실패 ({short_sym}): {e}")
+
+        self._save_state()
 
     # ==================== 데이터 조회 ====================
 
@@ -315,12 +362,25 @@ class MA100Trader:
         if side is None:
             return None
 
-        # 손절가 계산
+        # 손절가 계산 (DCA 전체 평균단가 기준)
+        # 모든 DCA 트랜치가 체결된다고 가정한 가중평균 진입가로 SL 설정
+        dca_ratios = self.params.get('dca_ratios', [1])
+        dca_interval = self.params.get('dca_interval_pct', 4.0)
+        total_ratio = sum(dca_ratios)
+        weighted_sum = 0.0
+        for i, ratio in enumerate(dca_ratios):
+            if side == "short":
+                tranche_price = current_price * (1 + i * dca_interval / 100)
+            else:
+                tranche_price = current_price * (1 - i * dca_interval / 100)
+            weighted_sum += tranche_price * ratio
+        avg_entry_full = weighted_sum / total_ratio
+
         sl_pct = self.params['sl_pct'] / 100
         if side == "long":
-            stop_loss = current_price * (1 - sl_pct)
+            stop_loss = avg_entry_full * (1 - sl_pct)
         else:
-            stop_loss = current_price * (1 + sl_pct)
+            stop_loss = avg_entry_full * (1 + sl_pct)
 
         return {
             "symbol": symbol,
@@ -641,18 +701,7 @@ class MA100Trader:
         pos["size"] = total_size
         pos["pending_dca"] = remaining
 
-        # SL 재계산
-        if side == "long":
-            pos["stop_loss"] = avg_price * (1 - self.params['sl_pct'] / 100)
-        else:
-            pos["stop_loss"] = avg_price * (1 + self.params['sl_pct'] / 100)
-
-        # 거래소 SL 업데이트
-        if not self.paper:
-            try:
-                self.client.set_stop_loss(symbol, pos["stop_loss"])
-            except Exception as e:
-                logger.warning(f"MA100 SL 업데이트 실패: {e}")
+        # SL은 처음부터 전체 DCA 평균단가 기준으로 설정됨 → 변경 불필요
 
         # 텔레그램 알림
         n_filled = len(entries)
@@ -662,7 +711,7 @@ class MA100Trader:
             f"체결: {n_filled}/{n_total}차\n"
             f"평균단가: {_fmt_price(old_entry)} → {_fmt_price(avg_price)}\n"
             f"총수량: {total_size}\n"
-            f"새 손절가: {_fmt_price(pos['stop_loss'])}"
+            f"손절가: {_fmt_price(pos['stop_loss'])} (변동없음)"
         )
 
         self._save_state()

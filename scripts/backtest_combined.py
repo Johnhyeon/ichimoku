@@ -921,16 +921,7 @@ class CombinedBacktester:
         pos["qty"] = total_size
         pos["pending_dca"] = remaining
 
-        # SL 재계산 (평균단가 기준)
-        sl_pct = self.ma100_config["sl_pct"]
-        if side == "long":
-            pos["stop_loss"] = avg_price * (1 - sl_pct / 100)
-        else:
-            pos["stop_loss"] = avg_price * (1 + sl_pct / 100)
-
-        # 트레일링 스톱도 SL로 리셋 (아직 트레일링 미발동 상태라면)
-        if not pos.get("trailing"):
-            pos["trail_stop"] = pos["stop_loss"]
+        # SL은 처음부터 전체 DCA 평균단가 기준으로 설정됨 → 변경 불필요
 
     def _check_ma100_exit(self, symbol: str, candle: pd.Series, dt: pd.Timestamp):
         """MA100 포지션 청산 (DCA → SL/TP/Reversal/Trail)."""
@@ -1411,11 +1402,22 @@ class CombinedBacktester:
                             continue
                         entry_price = sig["price"]
                         tp_pct = self.ma100_config["tp_pct"]
+                        # SL: 전체 DCA 평균단가 기준
+                        dca_r = self.ma100_config["dca_ratios"]
+                        dca_iv = self.ma100_config["dca_interval_pct"]
+                        tr = sum(dca_r)
+                        w_sum = 0.0
+                        for ii, rr in enumerate(dca_r):
+                            if side == "short":
+                                w_sum += entry_price * (1 + ii * dca_iv / 100) * rr
+                            else:
+                                w_sum += entry_price * (1 - ii * dca_iv / 100) * rr
+                        avg_full = w_sum / tr
                         if side == "long":
-                            sl_price = entry_price * (1 - self.ma100_config["sl_pct"] / 100)
+                            sl_price = avg_full * (1 - self.ma100_config["sl_pct"] / 100)
                             tp_price = entry_price * (1 + tp_pct / 100) if tp_pct > 0 else 0
                         else:
-                            sl_price = entry_price * (1 + self.ma100_config["sl_pct"] / 100)
+                            sl_price = avg_full * (1 + self.ma100_config["sl_pct"] / 100)
                             tp_price = entry_price * (1 - tp_pct / 100) if tp_pct > 0 else 0
                         total_qty, _margin = self._calc_qty("ma100", entry_price)
                         if total_qty <= 0:
