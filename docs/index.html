@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="logo">TRADING <span class="accent">HQ</span></h1>
+            <span class="mode-badge" id="modeBadge">LIVE</span>
+        </div>
+        <div class="header-right">
+            <span class="update-time" id="updateTime">--</span>
+            <span class="status-dot" id="statusDot"></span>
+        </div>
+    </header>
+
+    <!-- Overview Cards -->
+    <section class="overview">
+        <div class="card card-balance">
+            <div class="card-label">Total Balance</div>
+            <div class="card-value" id="totalBalance">--</div>
+            <div class="card-sub" id="balanceChange">--</div>
+        </div>
+        <div class="card card-pnl">
+            <div class="card-label">Unrealized PnL</div>
+            <div class="card-value" id="unrealizedPnl">--</div>
+            <div class="card-sub" id="unrealizedPct">--</div>
+        </div>
+        <div class="card card-trades">
+            <div class="card-label">Today's Trades</div>
+            <div class="card-value" id="todayTrades">--</div>
+            <div class="card-sub" id="todayPnl">--</div>
+        </div>
+        <div class="card card-winrate">
+            <div class="card-label">Overall Win Rate</div>
+            <div class="card-value" id="winRate">--</div>
+            <div class="card-sub" id="profitFactor">--</div>
+        </div>
+    </section>
+
+    <!-- Equity Curve -->
+    <section class="section">
+        <h2 class="section-title">Equity Curve</h2>
+        <div class="chart-container">
+            <canvas id="equityChart"></canvas>
+        </div>
+    </section>
+
+    <!-- Strategy Performance -->
+    <section class="section">
+        <h2 class="section-title">Strategy Performance</h2>
+        <div class="strategy-grid">
+            <div class="strategy-card" id="stratIchimoku">
+                <div class="strat-header">
+                    <span class="strat-name">Ichimoku Short</span>
+                    <span class="strat-status" id="ichiStatus">--</span>
+                </div>
+                <div class="strat-stats">
+                    <div class="stat"><span class="stat-label">Trades</span><span class="stat-value" id="ichiTrades">--</span></div>
+                    <div class="stat"><span class="stat-label">Win Rate</span><span class="stat-value" id="ichiWR">--</span></div>
+                    <div class="stat"><span class="stat-label">PnL</span><span class="stat-value" id="ichiPnl">--</span></div>
+                    <div class="stat"><span class="stat-label">PF</span><span class="stat-value" id="ichiPF">--</span></div>
+                </div>
+            </div>
+            <div class="strategy-card" id="stratMirror">
+                <div class="strat-header">
+                    <span class="strat-name">Mirror Short</span>
+                    <span class="strat-status" id="mirrorStatus">--</span>
+                </div>
+                <div class="strat-stats">
+                    <div class="stat"><span class="stat-label">Trades</span><span class="stat-value" id="mirrorTrades">--</span></div>
+                    <div class="stat"><span class="stat-label">Win Rate</span><span class="stat-value" id="mirrorWR">--</span></div>
+                    <div class="stat"><span class="stat-label">PnL</span><span class="stat-value" id="mirrorPnl">--</span></div>
+                    <div class="stat"><span class="stat-label">PF</span><span class="stat-value" id="mirrorPF">--</span></div>
+                </div>
+            </div>
+            <div class="strategy-card" id="stratMA100">
+                <div class="strat-header">
+                    <span class="strat-name">MA100 DCA Short</span>
+                    <span class="strat-status" id="ma100Status">--</span>
+                </div>
+                <div class="strat-stats">
+                    <div class="stat"><span class="stat-label">Trades</span><span class="stat-value" id="ma100Trades">--</span></div>
+                    <div class="stat"><span class="stat-label">Win Rate</span><span class="stat-value" id="ma100WR">--</span></div>
+                    <div class="stat"><span class="stat-label">PnL</span><span class="stat-value" id="ma100Pnl">--</span></div>
+                    <div class="stat"><span class="stat-label">PF</span><span class="stat-value" id="ma100PF">--</span></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Open Positions -->
+    <section class="section">
+        <h2 class="section-title">Open Positions <span class="count-badge" id="posCount">0</span></h2>
+        <div class="table-wrap">
+            <table class="data-table" id="positionsTable">
+                <thead>
+                    <tr>
+                        <th>Strategy</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Entry</th>
+                        <th>Current</th>
+                        <th>SL</th>
+                        <th>TP</th>
+                        <th>PnL</th>
+                        <th>DCA</th>
+                    </tr>
+                </thead>
+                <tbody id="positionsBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Trade History -->
+    <section class="section">
+        <h2 class="section-title">Recent Trades</h2>
+        <div class="table-wrap">
+            <table class="data-table" id="tradesTable">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Strategy</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>PnL</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="tradesBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- DCA Section -->
+    <section class="section">
+        <h2 class="section-title">Spot DCA Accumulation</h2>
+        <div class="dca-grid">
+            <div class="dca-card">
+                <div class="dca-coin">BTC</div>
+                <div class="dca-qty" id="dcaBtcQty">--</div>
+                <div class="dca-detail">
+                    <span>Invested: <span id="dcaBtcInvested">--</span></span>
+                    <span>Avg: <span id="dcaBtcAvg">--</span></span>
+                    <span>Buys: <span id="dcaBtcCount">--</span></span>
+                </div>
+            </div>
+            <div class="dca-card">
+                <div class="dca-coin">ETH</div>
+                <div class="dca-qty" id="dcaEthQty">--</div>
+                <div class="dca-detail">
+                    <span>Invested: <span id="dcaEthInvested">--</span></span>
+                    <span>Avg: <span id="dcaEthAvg">--</span></span>
+                    <span>Buys: <span id="dcaEthCount">--</span></span>
+                </div>
+            </div>
+        </div>
+        <div class="dca-meta" id="dcaMeta">--</div>
+    </section>
+
+    <!-- Monthly Report -->
+    <section class="section">
+        <h2 class="section-title">Monthly Summary</h2>
+        <div class="chart-container chart-short">
+            <canvas id="monthlyChart"></canvas>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <span>Auto-updated from Raspberry Pi</span>
+    </footer>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

@@ -31,8 +31,10 @@ logs/
 *.log
 
 # Backtest output (generated files)
-*.html
 *.csv
+
+# Dashboard (docs/data.json is auto-generated, but HTML/CSS/JS are tracked)
+docs/data.json
 
 # Database
 *.db

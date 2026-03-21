@@ -30,6 +30,7 @@ from src.ma100_trader import MA100Trader
 from src.spot_dca import SpotDCA
 from src.balance_tracker import BalanceTracker
 from src.chart_generator import ChartGenerator
+from scripts.export_dashboard_data import export_data, git_push
 
 # 로깅 설정
 logging.basicConfig(
@@ -396,6 +397,16 @@ class UnifiedTrader:
             logger.info(f"[DCA] 다음 체크까지 {check_interval/60:.0f}분 대기")
             await asyncio.sleep(check_interval)
 
+    async def _dashboard_loop(self):
+        """대시보드 데이터 내보내기 루프 (5분마다)"""
+        while True:
+            try:
+                export_data(paper=self.paper)
+                git_push()
+            except Exception as e:
+                logger.debug(f"[Dashboard] 내보내기 오류: {e}")
+            await asyncio.sleep(300)  # 5분
+
     async def run_async(self):
         """세 전략을 하나의 asyncio 루프에서 실행"""
         mode = "PAPER" if self.paper else "LIVE"
@@ -430,13 +441,15 @@ class UnifiedTrader:
         ma100_scan_task = asyncio.create_task(self._ma100_scan_loop())
         ma100_pos_task = asyncio.create_task(self._ma100_position_loop())
         dca_task = asyncio.create_task(self._dca_loop())
+        dashboard_task = asyncio.create_task(self._dashboard_loop())
 
         try:
             await asyncio.gather(
                 ichimoku_task, ichimoku_pos_task,
                 surge_task,
                 ma100_scan_task, ma100_pos_task,
-                dca_task
+                dca_task,
+                dashboard_task
             )
         except asyncio.CancelledError:
             logger.info("통합 봇 종료")
