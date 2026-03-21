@@ -14,8 +14,10 @@ build/
 
 # Virtual environments
 venv/
+venv311/
 env/
 ENV/
+.venv/
 
 # IDE
 .vscode/
@@ -28,10 +30,8 @@ ENV/
 logs/
 *.log
 
-# Backtest results (large files)
+# Backtest output (generated files)
 *.html
-backtest/*.html
-backtest/*.csv
 *.csv
 
 # Database
@@ -51,30 +51,24 @@ tmp/
 # Claude artifacts
 .claude/
 
-# ML models and training data (exclude from production)
+# ML models
 models/
 *.pkl
 *.pth
 *.onnx
 *.pb
-train_model*.py
-*ml_*.py
-convert_to_openvino.py
 
 # Historical data (too large for git)
 data/historical/
+data/backtest_cache/
 *.parquet
 
-# Backtest scripts (not needed in production)
-scripts/ai_backtest.py
-scripts/backtest_*.py
-generate_*.py
-get_remaining_symbols.py
-collect_historical_data.py
+# Data output (regeneratable)
+data/*.json
+data/*.html
 
-# Analysis files
-*_GUIDE.md
-RESUME_*.md
-DATA_COLLECTION*.md
-QUICKSTART.md
-PERFORMANCE_GUIDE.md
+# Playwright
+.playwright-mcp/
+
+# pytest
+.pytest_cache/
