@@ -288,17 +288,18 @@ class MA100Trader:
                 new_sl = avg_full * (1 + sl_pct)
 
             old_sl = pos["stop_loss"]
-            if abs(old_sl - new_sl) / old_sl > 0.001:  # 0.1% 이상 차이
-                short_sym = symbol.split('/')[0]
+            short_sym = symbol.split('/')[0]
+            if abs(old_sl - new_sl) / old_sl > 0.001:
                 logger.info(f"[MA100 SL] {short_sym} SL 재계산: {_fmt_price(old_sl)} → {_fmt_price(new_sl)}")
-                pos["stop_loss"] = new_sl
+            pos["stop_loss"] = new_sl
 
-                # 거래소 SL 업데이트
-                if not self.paper:
-                    try:
-                        self.client.set_stop_loss(symbol, new_sl)
-                    except Exception as e:
-                        logger.warning(f"MA100 SL 거래소 업데이트 실패 ({short_sym}): {e}")
+            # 거래소 SL 항상 동기화 (이전 실패 복구)
+            if not self.paper:
+                try:
+                    self.client.set_stop_loss(symbol, new_sl)
+                    logger.info(f"[MA100 SL] {short_sym} 거래소 SL 동기화: {_fmt_price(new_sl)}")
+                except Exception as e:
+                    logger.warning(f"MA100 SL 거래소 업데이트 실패 ({short_sym}): {e}")
 
         self._save_state()
 
