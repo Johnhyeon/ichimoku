@@ -369,7 +369,7 @@ class TelegramBot:
             surge_running = status.get('surge_running', False)
             ma100_running = status.get('ma100_running', False)
 
-            ich_btn = "⛩️ 이치모쿠 ⏸" if ich_running else "⛩️ 이치모쿠 ▶️"
+            ich_btn = "🔷 Vertex ⏸" if ich_running else "🔷 Vertex ▶️"
             ich_data = "ctrl_ich_stop" if ich_running else "ctrl_ich_start"
             surge_btn = "📉 미러숏 ⏸" if surge_running else "📉 미러숏 ▶️"
             surge_data = "ctrl_surge_stop" if surge_running else "ctrl_surge_start"
@@ -420,7 +420,7 @@ class TelegramBot:
 
         keyboard = [
             [InlineKeyboardButton(
-                f"⛩️ 이치모쿠: {ich_lev}x / {ich_pct}%",
+                f"🔷 Vertex: {ich_lev}x / {ich_pct}%",
                 callback_data="settings_ich"
             )],
             [InlineKeyboardButton(
@@ -436,7 +436,7 @@ class TelegramBot:
         return InlineKeyboardMarkup(keyboard)
 
     def _get_settings_ich_keyboard(self) -> InlineKeyboardMarkup:
-        """이치모쿠 설정 키보드"""
+        """Vertex 설정 키보드"""
         settings = {}
         if self.get_settings_callback:
             try:
@@ -607,7 +607,7 @@ class TelegramBot:
                 dca_emoji = "🟢" if st.get('dca_running') else "🔴"
 
                 strategy_status_text = f"""
-⛩️{ich_emoji} 📉{surge_emoji} 📊{ma100_emoji} 🛒{dca_emoji}
+🔷{ich_emoji} 📉{surge_emoji} 📊{ma100_emoji} 🛒{dca_emoji}
 🕐 갱신: {now} UTC
 
 📊 <b>미러숏 오늘</b>
@@ -656,17 +656,17 @@ class TelegramBot:
                 positions = self.get_positions_callback()
                 if positions:
                     # 전략별 그룹화
-                    ichimoku_pos = [p for p in positions if p.get('strategy') == 'ichimoku']
+                    ichimoku_pos = [p for p in positions if p.get('strategy') in ('fractals', 'ichimoku')]
                     surge_pos = [p for p in positions if p.get('strategy') in ('surge', 'mirror_short')]
                     ma100_pos = [p for p in positions if p.get('strategy') == 'ma100']
-                    other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge', 'mirror_short', 'ma100')]
+                    other_pos = [p for p in positions if p.get('strategy') not in ('fractals', 'ichimoku', 'surge', 'mirror_short', 'ma100')]
 
                     has_groups = bool(ichimoku_pos) or bool(surge_pos) or bool(ma100_pos)
 
                     if has_groups:
                         positions_text = "\n\n📋 <b>포지션</b>"
                         if ichimoku_pos:
-                            positions_text += "\n\n⛩️ <b>이치모쿠</b>"
+                            positions_text += "\n\n🔷 <b>Vertex</b>"
                             for p in ichimoku_pos:
                                 positions_text += self._format_position_line(p)
                         if surge_pos:
@@ -953,7 +953,7 @@ class TelegramBot:
             await self._safe_edit_message(query, text, self._get_settings_keyboard())
             return
 
-        # 이치모쿠 설정 화면
+        # Vertex 설정 화면
         if data == "settings_ich":
             settings = {}
             if self.get_settings_callback:
@@ -963,7 +963,7 @@ class TelegramBot:
                     pass
             cur_lev = settings.get('ich_leverage', 20)
             cur_pct = int(settings.get('ich_pct', 5))
-            text = f"⛩️ <b>이치모쿠 설정</b>\n\n현재: {cur_lev}x / {cur_pct}%"
+            text = f"🔷 <b>Vertex 설정</b>\n\n현재: {cur_lev}x / {cur_pct}%"
             await self._safe_edit_message(query, text, self._get_settings_ich_keyboard())
             return
 
@@ -1015,7 +1015,7 @@ class TelegramBot:
                     st = self.get_strategy_status_callback()
                     ich_status = "🟢 실행중" if st.get('ichimoku_running') else "🔴 중지됨"
                     surge_status = "🟢 실행중" if st.get('surge_running') else "🔴 중지됨"
-                    text = f"⚙️ <b>봇 제어</b>\n\n⛩️ 이치모쿠: {ich_status}\n📉 미러숏: {surge_status}"
+                    text = f"⚙️ <b>봇 제어</b>\n\n🔷 Vertex: {ich_status}\n📉 미러숏: {surge_status}"
                 except:
                     text = "⚙️ <b>봇 제어</b>"
             else:
@@ -1028,14 +1028,14 @@ class TelegramBot:
         if data == "ctrl_ich_stop":
             if self.stop_ichimoku_callback:
                 self.stop_ichimoku_callback()
-            text = "⏸ 이치모쿠 전략 중지됨"
+            text = "⏸ Vertex 전략 중지됨"
             await self._safe_edit_message(query, text, self._get_control_keyboard())
             return
 
         if data == "ctrl_ich_start":
             if self.start_ichimoku_callback:
                 self.start_ichimoku_callback()
-            text = "▶️ 이치모쿠 전략 시작됨"
+            text = "▶️ Vertex 전략 시작됨"
             await self._safe_edit_message(query, text, self._get_control_keyboard())
             return
 
@@ -1217,16 +1217,16 @@ class TelegramBot:
                 text = "📋 <b>포지션 상세</b>\n"
 
                 # 전략별 그룹화
-                ichimoku_pos = [p for p in positions if p.get('strategy') == 'ichimoku']
+                ichimoku_pos = [p for p in positions if p.get('strategy') in ('fractals', 'ichimoku')]
                 surge_pos = [p for p in positions if p.get('strategy') in ('surge', 'mirror_short')]
                 ma100_pos = [p for p in positions if p.get('strategy') == 'ma100']
-                other_pos = [p for p in positions if p.get('strategy') not in ('ichimoku', 'surge', 'mirror_short', 'ma100')]
+                other_pos = [p for p in positions if p.get('strategy') not in ('fractals', 'ichimoku', 'surge', 'mirror_short', 'ma100')]
                 has_groups = bool(ichimoku_pos) or bool(surge_pos) or bool(ma100_pos)
 
                 ordered_positions = []
                 if has_groups:
                     if ichimoku_pos:
-                        ordered_positions.append(("⛩️ <b>이치모쿠</b>", ichimoku_pos))
+                        ordered_positions.append(("🔷 <b>Vertex</b>", ichimoku_pos))
                     if surge_pos:
                         ordered_positions.append(("📉 <b>미러숏</b>", surge_pos))
                     if ma100_pos:
@@ -1346,7 +1346,7 @@ class TelegramBot:
                 text += "━━━━━━━━━━━━━━━━\n"
 
                 # 전략별 통계
-                strat_map = {'ichimoku': '⛩️', 'mirror_short': '📉', 'surge': '📉', 'ma100': '📊'}
+                strat_map = {'fractals': '🔷', 'ichimoku': '🔷', 'mirror_short': '📉', 'surge': '📉', 'ma100': '📊'}
                 strat_groups = {}
                 for h in history:
                     s = h.get('strategy', '')
@@ -1354,7 +1354,7 @@ class TelegramBot:
 
                 for s_name, s_trades in strat_groups.items():
                     s_emoji = strat_map.get(s_name, '📋')
-                    s_label = {'ichimoku': '이치모쿠', 'mirror_short': '미러숏', 'surge': '미러숏', 'ma100': 'MA100'}.get(s_name, s_name or '기타')
+                    s_label = {'fractals': 'Vertex', 'ichimoku': 'Vertex', 'mirror_short': '미러숏', 'surge': '미러숏', 'ma100': 'MA100'}.get(s_name, s_name or '기타')
                     s_pnl = sum(t.get('pnl_usd', 0) for t in s_trades)
                     s_wins = sum(1 for t in s_trades if t.get('pnl_usd', 0) > 0)
                     s_total = len(s_trades)
@@ -1366,7 +1366,8 @@ class TelegramBot:
 
                 # 전략별로 그룹화하여 표시
                 strat_order = [
-                    ('ichimoku', '⛩️ <b>이치모쿠</b>'),
+                    ('fractals', '🔷 <b>Vertex</b>'),
+                    ('ichimoku', '🔷 <b>Vertex</b>'),
                     ('mirror_short', '📉 <b>미러숏</b>'),
                     ('surge', '📉 <b>미러숏</b>'),
                     ('ma100', '📊 <b>MA100</b>'),
@@ -1424,7 +1425,7 @@ class TelegramBot:
                             text += f"\n   <code>{time_str}</code>"
 
                 # 전략 태그 없는 거래
-                other = [h for h in history if h.get('strategy', '') not in ('ichimoku', 'mirror_short', 'surge')]
+                other = [h for h in history if h.get('strategy', '') not in ('fractals', 'ichimoku', 'mirror_short', 'surge')]
                 if other:
                     text += "\n\n📋 <b>기타</b>\n"
                     for h in other[:5]:
@@ -1501,7 +1502,7 @@ class TelegramBot:
                 # 차트는 새 메시지로 전송 (이미지는 edit 불가)
                 await self.notifier.send_photo(
                     chart_bytes,
-                    caption=f"📈 {symbol}/USDT 일목균형표 차트",
+                    caption=f"📈 {symbol}/USDT Vertex 차트",
                     reply_markup=self._get_back_keyboard()
                 )
                 # 원래 메시지는 메뉴로 복귀
@@ -1528,7 +1529,7 @@ class TelegramBot:
             if chart_bytes:
                 await self.notifier.send_photo(
                     chart_bytes,
-                    caption="📊 주요 코인 일목균형표 차트",
+                    caption="📊 주요 코인 Vertex 차트",
                     reply_markup=self._get_back_keyboard()
                 )
                 await self._safe_edit_message(
@@ -1805,14 +1806,14 @@ class TelegramBot:
                 text += self._format_stats_block(all_stats, "📋 <b>전체</b>")
 
                 # 전략별 분리
-                ich_trades = [h for h in history if h.get('strategy') == 'ichimoku']
+                ich_trades = [h for h in history if h.get('strategy') in ('fractals', 'ichimoku')]
                 surge_trades = [h for h in history if h.get('strategy') in ('mirror_short', 'surge')]
                 ma100_trades = [h for h in history if h.get('strategy') == 'ma100']
 
                 if ich_trades:
                     text += "━━━━━━━━━━━━━━━━\n"
                     ich_stats = self._calc_strategy_stats(ich_trades)
-                    text += self._format_stats_block(ich_stats, "⛩️ <b>이치모쿠</b>")
+                    text += self._format_stats_block(ich_stats, "🔷 <b>Vertex</b>")
 
                 if surge_trades:
                     text += "━━━━━━━━━━━━━━━━\n"
@@ -1982,7 +1983,7 @@ class TelegramBot:
 
     def _get_strategy_name(self, strategy: str) -> str:
         """전략 키 → 표시 이름"""
-        names = {"ich": "이치모쿠", "surge": "미러숏", "ma100": "MA100"}
+        names = {"ich": "Vertex", "surge": "미러숏", "ma100": "MA100"}
         return names.get(strategy, strategy)
 
     def _get_strategy_key(self, strategy: str) -> str:

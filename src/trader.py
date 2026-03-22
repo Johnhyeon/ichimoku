@@ -20,6 +20,10 @@ from src.strategy import (
     get_entry_signal, check_exit_signal, update_btc_trend,
     LEVERAGE, POSITION_PCT, STRATEGY_PARAMS, MAJOR_COINS
 )
+from src.fractals_strategy import (
+    compute_fractals, get_fractals_entry_signal, check_fractals_exit,
+    FRACTALS_LEVERAGE, FRACTALS_POSITION_PCT, FRACTALS_PARAMS,
+)
 from src.telegram_bot import TelegramNotifier, TelegramBot
 from src.market_analyzer import MarketAnalyzer
 from src.chart_generator import ChartGenerator
@@ -92,12 +96,22 @@ class IchimokuTrader:
         # 상태 저장 파일 경로
         self.state_file = "data/bot_state.json"
 
-        # BTC 트렌드
+        # BTC 트렌드 (이치모쿠용, 현재 비활성)
         self.btc_uptrend: Optional[bool] = None
 
-        # 레버리지/진입비율 (런타임 변경 가능)
-        self.leverage = LEVERAGE
-        self.position_pct = POSITION_PCT
+        # 전략 모드: "fractals" (활성) or "ichimoku" (비활성)
+        self.strategy_mode = "fractals"
+
+        # 레버리지/진입비율 — 전략 모드에 따라 설정
+        if self.strategy_mode == "fractals":
+            self.leverage = FRACTALS_LEVERAGE
+            self.position_pct = FRACTALS_POSITION_PCT
+        else:
+            self.leverage = LEVERAGE
+            self.position_pct = POSITION_PCT
+
+        # Fractals 쿨다운 카운터: {symbol: 마지막 청산 이후 경과 캔들 수}
+        self.exit_candle_counts: Dict[str, int] = {}
 
         # 시작 로그
         mode = "PAPER" if self.paper else "LIVE"
@@ -515,7 +529,8 @@ class IchimokuTrader:
             "trail_stop": stop_loss,
             "trailing": False,
             "size": qty,
-            "strategy": "ichimoku",
+            "strategy": self.strategy_mode,
+            "best_pnl": 0,  # Fractals 트레일링용
         }
 
         # 텔레그램 알림
@@ -895,6 +910,120 @@ class IchimokuTrader:
 
     def run_once(self):
         """한 번 스캔 및 실행"""
+        if self.strategy_mode == "fractals":
+            self._run_once_fractals()
+        else:
+            self._run_once_ichimoku()
+
+    def _run_once_fractals(self):
+        """Fractals 전략 스캔 (롱+숏)"""
+        params = FRACTALS_PARAMS
+
+        # 수동 청산 감지
+        self._check_manual_closes()
+
+        # 쿨다운 카운터 증가 (매 캔들마다)
+        for sym in list(self.exit_candle_counts):
+            self.exit_candle_counts[sym] += 1
+
+        # 각 심볼 데이터 로드 + 프랙탈 지표 계산
+        latest_rows: Dict[str, pd.Series] = {}
+        prev_rows: Dict[str, pd.Series] = {}
+        symbol_dfs: Dict[str, pd.DataFrame] = {}
+        for symbol in MAJOR_COINS:
+            df = self._fetch_fractals_df(symbol, limit=200)
+            if df is None or len(df) < 12:
+                continue
+            latest_rows[symbol] = df.iloc[-1]
+            prev_rows[symbol] = df.iloc[-2]
+            symbol_dfs[symbol] = df
+
+        if not latest_rows:
+            logger.warning("유효한 심볼 데이터가 없습니다.")
+            return
+
+        # 기존 포지션 청산 체크
+        positions_updated = False
+        for symbol, pos in list(self.positions.items()):
+            row = latest_rows.get(symbol)
+            if row is None:
+                continue
+
+            old_trailing = pos.get("trailing", False)
+            old_best = pos.get("best_pnl", 0)
+
+            exit_info = check_fractals_exit(pos, row, params)
+
+            if pos.get("trailing") != old_trailing or pos.get("best_pnl", 0) != old_best:
+                positions_updated = True
+
+            if exit_info:
+                self._close_position(symbol, exit_info)
+                self.exit_candle_counts[symbol] = 0
+
+        if positions_updated:
+            self._save_state()
+
+        # 진입 후보 생성
+        candidates = []
+        for symbol, row in latest_rows.items():
+            if symbol in self.positions:
+                continue
+            prev = prev_rows.get(symbol)
+            if prev is None:
+                continue
+            ecc = self.exit_candle_counts.get(symbol)
+            sig = get_fractals_entry_signal(symbol, row, prev, ecc, params)
+            if sig:
+                candidates.append(sig)
+
+        if not candidates:
+            logger.info("[WAIT] 프랙탈 진입 후보 없음")
+            return
+
+        # ADX(스코어)순 정렬
+        candidates.sort(key=lambda x: -x["score"])
+
+        # 잔고 기반 진입
+        try:
+            balance = self._get_balance_free()
+        except Exception:
+            balance = 0.0
+
+        if balance <= 0:
+            logger.warning("USDT 잔고가 없습니다.")
+            return
+
+        free = balance
+        for cand in candidates:
+            if len(self.positions) >= params["max_positions"]:
+                logger.info("[LIMIT] 최대 포지션 수 도달")
+                break
+
+            df = symbol_dfs.get(cand["symbol"])
+            used_margin = self._open_position(cand, free, df)
+            if used_margin <= 0:
+                continue
+
+            free -= used_margin
+            if free <= 0:
+                break
+
+    def _fetch_fractals_df(self, symbol: str, limit: int = 200) -> Optional[pd.DataFrame]:
+        """프랙탈 지표 계산"""
+        try:
+            df = self.data_fetcher.get_ohlcv(symbol, self.timeframe, limit=limit)
+        except Exception as e:
+            logger.error(f"OHLCV 조회 실패 ({symbol}): {e}")
+            return None
+        if df is None or df.empty:
+            return None
+        df = df.reset_index()
+        df = compute_fractals(df, FRACTALS_PARAMS["fractal_period"])
+        return df
+
+    def _run_once_ichimoku(self):
+        """이치모쿠 전략 스캔 (숏 전용) — 현재 비활성"""
         params = STRATEGY_PARAMS
 
         # BTC 트렌드 업데이트
