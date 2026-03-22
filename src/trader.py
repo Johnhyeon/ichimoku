@@ -149,6 +149,8 @@ class IchimokuTrader:
                 "positions": positions_to_save,
                 "last_exit_times": last_exits_to_save,
                 "trade_history": history_to_save,
+                "exit_candle_counts": self.exit_candle_counts,
+                "strategy_mode": self.strategy_mode,
                 "saved_at": datetime.utcnow().isoformat()
             }
 
@@ -186,10 +188,14 @@ class IchimokuTrader:
                     h["closed_at"] = datetime.fromisoformat(h["closed_at"])
                 self.trade_history.append(h)
 
+            # Fractals 쿨다운 카운터 복원
+            self.exit_candle_counts = state.get("exit_candle_counts", {})
+
             saved_at = state.get("saved_at", "알 수 없음")
             logger.info(f"저장된 상태 불러옴 (저장 시각: {saved_at})")
             logger.info(f"  - 포지션 {len(self.positions)}개")
             logger.info(f"  - 거래 이력 {len(self.trade_history)}건")
+            logger.info(f"  - 전략 모드: {self.strategy_mode}")
 
             return True
 
