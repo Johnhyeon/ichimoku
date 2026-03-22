@@ -41,9 +41,9 @@ MA100_PARAMS = {
     'trail_pct': 3.0,
     'cooldown_days': 3,
     'fee_rate': 0.00055,
-    # ── 분할매수 (DCA) ──
-    'dca_ratios': [1, 1, 2],    # 분할매수 비율 (1차:2차:3차 = 1:1:2)
-    'dca_interval_pct': 4.0,    # 분할매수 간격 (%) - 숏: 진입가 위로
+    # DCA 비활성화 (백테스트 결과: 풀사이즈 진입이 더 우수)
+    'dca_ratios': [1],
+    'dca_interval_pct': 0,
 }
 
 
@@ -209,9 +209,9 @@ class MA100Trader:
 
             if self.positions:
                 logger.info(f"MA100 관리 포지션 {len(self.positions)}개 동기화 완료")
-                # 미체결 DCA 지정가 주문 복원
-                self._restore_dca_orders()
-                # 기존 포지션 SL을 전체 DCA 평균단가 기준으로 재계산
+                # DCA 비활성화: 기존 DCA 주문 취소 및 정리
+                self._cancel_pending_dca_orders()
+                # 기존 포지션 SL을 진입가 기준으로 재계산
                 self._recalc_sl_full_dca()
             else:
                 logger.info("MA100 관리 중인 포지션 없음")
@@ -221,41 +221,28 @@ class MA100Trader:
         except Exception as e:
             logger.error(f"MA100 포지션 동기화 실패: {e}")
 
-    def _restore_dca_orders(self):
-        """재시작 시 미체결 DCA 지정가 주문 복원"""
-        if self.paper:
-            return
-
+    def _cancel_pending_dca_orders(self):
+        """기존 DCA 지정가 주문 취소 및 pending_dca 정리"""
         for symbol, pos in self.positions.items():
             pending = pos.get("pending_dca")
             if not pending:
                 continue
 
-            side = pos["side"]
-            order_side = "buy" if side == "long" else "sell"
             short_sym = symbol.split('/')[0]
 
-            # 거래소에 이미 걸린 주문 확인
-            open_orders = self.client.get_open_orders(symbol)
-            open_prices = {round(o["price"], 10) for o in open_orders}
+            if not self.paper:
+                # 거래소 미체결 주문 취소
+                for dca in pending:
+                    order_id = dca.get("order_id")
+                    if order_id:
+                        try:
+                            self.client.exchange.cancel_order(order_id, symbol)
+                            logger.info(f"[MA100] {short_sym} DCA 주문 취소: {order_id}")
+                        except Exception as e:
+                            logger.debug(f"DCA 주문 취소 실패 (이미 체결/취소됨): {e}")
 
-            for j, dca in enumerate(pending):
-                # order_id가 있고 거래소에도 있으면 스킵
-                if dca.get("order_id"):
-                    open_ids = {o["id"] for o in open_orders}
-                    if dca["order_id"] in open_ids:
-                        logger.info(f"[MA100 DCA] {short_sym} {j+2}차 이미 등록됨 (id={dca['order_id']})")
-                        continue
-
-                # 지정가 주문 등록
-                try:
-                    order = self.client.limit_order(
-                        symbol, order_side, dca["size"], dca["price"]
-                    )
-                    dca["order_id"] = order["id"]
-                    logger.info(f"[MA100 DCA] {short_sym} {j+2}차 지정가 복원: {dca['size']} @ {_fmt_price(dca['price'])} (id={order['id']})")
-                except Exception as e:
-                    logger.error(f"MA100 DCA {j+2}차 지정가 복원 실패 ({symbol}): {e}")
+            pos["pending_dca"] = []
+            logger.info(f"[MA100] {short_sym} DCA 비활성화 → 풀사이즈 모드")
 
     def _recalc_sl_full_dca(self):
         """기존 포지션 SL을 전체 DCA 평균단가 기준으로 재계산 (재시작 시)"""

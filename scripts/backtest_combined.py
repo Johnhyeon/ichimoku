@@ -100,9 +100,9 @@ MA100_CONFIG = {
     "trail_start_pct": 3.0,
     "trail_pct": 2.0,
     "cooldown_days": 3,
-    # ── 분할매수 (DCA) ──
-    "dca_ratios": [1, 1, 2],       # 1차:2차:3차 = 1:1:2
-    "dca_interval_pct": 4.0,       # 숏: 진입가 위로 4% 간격
+    # DCA 비활성화 (백테스트 결과: 풀사이즈 진입이 더 우수)
+    "dca_ratios": [1],
+    "dca_interval_pct": 0,
 }
 
 DCA_CONFIG = {
@@ -779,6 +779,7 @@ class CombinedBacktester:
             "fee_usd": fee_usd,
             "reason": reason,
             "signal_type": pos.get("signal_type", ""),
+            "dca_fills": len(pos.get("filled_entries", [])) or 1,
         })
 
     def _update_equity(self, dt: pd.Timestamp):
