@@ -198,7 +198,7 @@ class MA100Trader:
 
                 if symbol in saved_positions:
                     saved = saved_positions[symbol]
-                    if abs(saved.get("entry_price", 0) - entry_price) < 0.01:
+                    if abs(saved.get("entry_price", 0) - entry_price) / max(entry_price, 0.01) < 0.01:
                         self.positions[symbol] = saved
                         self.positions[symbol]["size"] = size
                         self.positions[symbol]["pnl"] = pnl
@@ -768,7 +768,9 @@ class MA100Trader:
             if pnl_pct >= trail_start:
                 if not pos.get('trailing'):
                     pos['trailing'] = True
+                    pos['trail_activated_at'] = current_price
                     logger.info(f"[MA100 TRAIL] {symbol} 트레일링 활성화 (수익률: {pnl_pct:.1f}%)")
+                    self._save_state()
 
                 # 최고가 대비 trail_pct% 하락 시 청산
                 highest = pos['highest']
@@ -789,7 +791,9 @@ class MA100Trader:
             if pnl_pct >= trail_start:
                 if not pos.get('trailing'):
                     pos['trailing'] = True
+                    pos['trail_activated_at'] = current_price
                     logger.info(f"[MA100 TRAIL] {symbol} 트레일링 활성화 (수익률: {pnl_pct:.1f}%)")
+                    self._save_state()
 
                 # 최저가 대비 trail_pct% 상승 시 청산
                 lowest = pos['lowest']
