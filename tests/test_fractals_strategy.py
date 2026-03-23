@@ -101,7 +101,7 @@ class TestParameters:
         assert FRACTALS_PARAMS["trail_start_pct"] == 2.0
 
     def test_trail_pct(self):
-        assert FRACTALS_PARAMS["trail_pct"] == 2.0
+        assert FRACTALS_PARAMS["trail_pct"] == 1.5
 
     def test_cooldown(self):
         assert FRACTALS_PARAMS["cooldown_candles"] == 2
@@ -247,67 +247,70 @@ class TestEntrySignal:
 # ═══════════════════════════════════════════════════════════════
 
 class TestFilters:
-    """TC-04: 필터 차단 검증."""
+    """TC-04: 필터 검증 (use_filters 토글)."""
 
-    def test_adx_too_low_blocks(self, long_entry_rows):
+    FILTERED_PARAMS = {**FRACTALS_PARAMS, "use_filters": True}
+
+    def test_nofilter_ignores_bad_adx(self, long_entry_rows):
+        """노필터 모드: ADX 낮아도 진입."""
         prev, curr = long_entry_rows
         curr = curr.copy()
-        curr["adx"] = 15
+        curr["adx"] = 5
         sig = get_fractals_entry_signal("TEST", curr, prev, None)
-        assert sig is None
+        assert sig is not None
 
-    def test_ema_mismatch_blocks_long(self, long_entry_rows):
+    def test_nofilter_ignores_ema_mismatch(self, long_entry_rows):
+        """노필터 모드: EMA 역방향이어도 진입."""
         prev, curr = long_entry_rows
         curr = curr.copy()
         curr["ema_fast"] = 99
         curr["ema_slow"] = 100
         sig = get_fractals_entry_signal("TEST", curr, prev, None)
-        assert sig is None
+        assert sig is not None
 
-    def test_ema_mismatch_blocks_short(self, short_entry_rows):
-        prev, curr = short_entry_rows
+    def test_filtered_adx_blocks(self, long_entry_rows):
+        """필터 모드: ADX<20 차단."""
+        prev, curr = long_entry_rows
         curr = curr.copy()
-        curr["ema_fast"] = 101
-        curr["ema_slow"] = 100
-        sig = get_fractals_entry_signal("TEST", curr, prev, None)
+        curr["adx"] = 15
+        sig = get_fractals_entry_signal("TEST", curr, prev, None, self.FILTERED_PARAMS)
         assert sig is None
 
-    def test_rsi_too_high_blocks_long(self, long_entry_rows):
+    def test_filtered_ema_blocks_long(self, long_entry_rows):
+        """필터 모드: EMA 역방향 차단."""
+        prev, curr = long_entry_rows
+        curr = curr.copy()
+        curr["ema_fast"] = 99
+        curr["ema_slow"] = 100
+        sig = get_fractals_entry_signal("TEST", curr, prev, None, self.FILTERED_PARAMS)
+        assert sig is None
+
+    def test_filtered_rsi_blocks_long(self, long_entry_rows):
+        """필터 모드: RSI>65 차단."""
         prev, curr = long_entry_rows
         curr = curr.copy()
         curr["rsi"] = 70
-        sig = get_fractals_entry_signal("TEST", curr, prev, None)
+        sig = get_fractals_entry_signal("TEST", curr, prev, None, self.FILTERED_PARAMS)
         assert sig is None
 
-    def test_rsi_too_low_blocks_short(self, short_entry_rows):
+    def test_filtered_rsi_blocks_short(self, short_entry_rows):
+        """필터 모드: RSI<35 차단."""
         prev, curr = short_entry_rows
         curr = curr.copy()
         curr["rsi"] = 30
-        sig = get_fractals_entry_signal("TEST", curr, prev, None)
+        sig = get_fractals_entry_signal("TEST", curr, prev, None, self.FILTERED_PARAMS)
         assert sig is None
 
-    def test_rsi_boundary_long_pass(self, long_entry_rows):
-        """RSI=65 (경계값) 통과."""
-        prev, curr = long_entry_rows
-        curr = curr.copy()
-        curr["rsi"] = 65
-        sig = get_fractals_entry_signal("TEST", curr, prev, None)
-        assert sig is not None
-
-    def test_rsi_boundary_short_pass(self, short_entry_rows):
-        """RSI=35 (경계값) 통과."""
-        prev, curr = short_entry_rows
-        curr = curr.copy()
-        curr["rsi"] = 35
-        sig = get_fractals_entry_signal("TEST", curr, prev, None)
-        assert sig is not None
+    def test_default_is_nofilter(self):
+        """기본 파라미터가 노필터인지 확인."""
+        assert FRACTALS_PARAMS.get("use_filters") is False
 
     def test_adx_boundary_pass(self, long_entry_rows):
-        """ADX=20 (경계값) 통과."""
+        """필터 모드: ADX=20 경계값 통과."""
         prev, curr = long_entry_rows
         curr = curr.copy()
         curr["adx"] = 20
-        sig = get_fractals_entry_signal("TEST", curr, prev, None)
+        sig = get_fractals_entry_signal("TEST", curr, prev, None, self.FILTERED_PARAMS)
         assert sig is not None
 
     def test_nan_fractal_blocks(self):
@@ -441,7 +444,7 @@ class TestExitTrail:
         pos = {"side": "long", "entry_price": 100, "stop_loss": 97, "take_profit": 110, "best_pnl": 3.0, "trailing": True}
         row = pd.Series({"high": 103, "low": 101.5, "close": 102})
         r = check_fractals_exit(pos, row)
-        assert r is None, "Drawdown 1% < trail 2% should hold"
+        assert r is None, "Drawdown 1% < trail 1.5% should hold"
 
     def test_short_trail_triggers(self):
         pos = {"side": "short", "entry_price": 100, "stop_loss": 103, "take_profit": 90, "best_pnl": 4.0, "trailing": True}

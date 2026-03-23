@@ -25,10 +25,11 @@ FRACTALS_PARAMS = {
     "sl_pct": 3.0,
     "tp_pct": 10.0,
     "trail_start_pct": 2.0,
-    "trail_pct": 2.0,
+    "trail_pct": 1.5,
     "cooldown_candles": 2,
     "max_positions": 5,
-    # 필터
+    # 필터 비활성 (노필터 모드 — 그리드 서치 결과 PF 1.95, WF PASS)
+    "use_filters": False,
     "ema_fast": 20,
     "ema_slow": 50,
     "rsi_period": 14,
@@ -129,25 +130,26 @@ def get_fractals_entry_signal(
     if not long_signal and not short_signal:
         return None
 
-    # 필터 체크
-    ema_f = float(row.get("ema_fast", 0))
-    ema_s = float(row.get("ema_slow", 0))
-    rsi = float(row.get("rsi", 50))
-    adx = float(row.get("adx", 0))
+    # 필터 체크 (use_filters=False이면 스킵)
+    if params.get("use_filters", False):
+        ema_f = float(row.get("ema_fast", 0))
+        ema_s = float(row.get("ema_slow", 0))
+        rsi = float(row.get("rsi", 50))
+        adx = float(row.get("adx", 0))
 
-    if long_signal:
-        if ema_f <= ema_s:
-            return None
-        if rsi > params["rsi_long_max"]:
-            return None
-    elif short_signal:
-        if ema_f >= ema_s:
-            return None
-        if rsi < params["rsi_short_min"]:
-            return None
+        if long_signal:
+            if ema_f <= ema_s:
+                return None
+            if rsi > params["rsi_long_max"]:
+                return None
+        elif short_signal:
+            if ema_f >= ema_s:
+                return None
+            if rsi < params["rsi_short_min"]:
+                return None
 
-    if adx < params["adx_min"]:
-        return None
+        if adx < params["adx_min"]:
+            return None
 
     # SL/TP 계산
     side = "long" if long_signal else "short"
@@ -167,8 +169,8 @@ def get_fractals_entry_signal(
         "price": price,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
-        "score": adx,  # ADX를 스코어로 사용 (높을수록 추세 강함)
-        "rsi": rsi,
+        "score": float(row.get("adx", 0)),
+        "rsi": float(row.get("rsi", 50)),
         "fractal_level": float(fh) if long_signal else float(fl),
     }
 
