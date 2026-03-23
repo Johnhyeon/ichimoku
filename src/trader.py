@@ -27,6 +27,7 @@ from src.fractals_strategy import (
 from src.telegram_bot import TelegramNotifier, TelegramBot
 from src.market_analyzer import MarketAnalyzer
 from src.chart_generator import ChartGenerator
+from src.trade_logger import TradeLogger
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class IchimokuTrader:
         # 시장 분석 & 차트
         self.market_analyzer = MarketAnalyzer(self.data_fetcher)
         self.chart_generator = ChartGenerator()
+        self.trade_logger = TradeLogger()
 
         # 분석 콜백 설정
         self.telegram_bot.set_analysis_callbacks(
@@ -112,6 +114,9 @@ class IchimokuTrader:
 
         # Fractals 쿨다운 카운터: {symbol: 마지막 청산 이후 경과 캔들 수}
         self.exit_candle_counts: Dict[str, int] = {}
+
+        # 청산 후 가격 추적 대기열
+        self._pending_post_exits: list = []
 
         # 시작 로그
         mode = "PAPER" if self.paper else "LIVE"
@@ -562,6 +567,25 @@ class IchimokuTrader:
         # 텔레그램 알림
         self.notifier.notify_entry(symbol, side, price, qty, stop_loss, take_profit, strategy=self.strategy_mode)
 
+        # 거래 로그 (전건 누적)
+        used_margin = (price * qty) / self.leverage
+        indicators = {}
+        if df is not None and len(df) > 0:
+            last = df.iloc[-1]
+            indicators = {
+                "adx": float(last.get("adx", 0)) if not pd.isna(last.get("adx", 0)) else 0,
+                "rsi": float(last.get("rsi", 0)) if not pd.isna(last.get("rsi", 0)) else 0,
+                "ema_fast": float(last.get("ema_fast", 0)) if not pd.isna(last.get("ema_fast", 0)) else 0,
+                "ema_slow": float(last.get("ema_slow", 0)) if not pd.isna(last.get("ema_slow", 0)) else 0,
+                "fractal_level": float(signal.get("fractal_level", 0)),
+            }
+        self.trade_logger.log_entry(
+            symbol, side, price, stop_loss, take_profit,
+            strategy=self.strategy_mode, leverage=self.leverage,
+            position_pct=self.position_pct, margin_usdt=used_margin,
+            qty=qty, indicators=indicators,
+        )
+
         # AI 진입 이유 분석 (비동기)
         if df is not None:
             asyncio.create_task(self._send_entry_analysis(symbol, df, side))
@@ -569,7 +593,6 @@ class IchimokuTrader:
         # 상태 저장
         self._save_state()
 
-        used_margin = (price * qty) / self.leverage
         return used_margin
 
     async def _send_entry_analysis(self, symbol: str, df: pd.DataFrame, side: str):
@@ -639,6 +662,29 @@ class IchimokuTrader:
 
         # 텔레그램 알림
         self.notifier.notify_exit(symbol, side, entry, price, pnl_pct, pnl_usd, reason, strategy=self.strategy_mode)
+
+        # 거래 로그 (전건 누적)
+        entry_time = pos.get("entry_time")
+        margin = (entry * qty) / self.leverage
+        self.trade_logger.log_exit(
+            symbol, side, entry, price, pnl_pct, pnl_usd, reason,
+            strategy=self.strategy_mode, leverage=self.leverage,
+            qty=qty, margin_usdt=margin, entry_time=entry_time,
+            best_pnl_pct=pos.get("best_pnl", 0),
+            worst_pnl_pct=pos.get("worst_pnl", 0),
+            best_price=pos.get("highest", entry),
+            worst_price=pos.get("lowest", entry),
+            trailing_activated=pos.get("trailing", False),
+            trail_stop_price=pos.get("trail_stop", 0),
+        )
+
+        # 청산 후 가격 추적 예약 (4h, 12h, 24h, 48h 후)
+        self._pending_post_exits.append({
+            "symbol": symbol, "strategy": self.strategy_mode, "side": side,
+            "exit_price": price, "exit_time": datetime.utcnow(), "exit_reason": reason,
+            "check_hours": [4, 12, 24, 48], "checked": [],
+            "max_favorable": 0, "max_adverse": 0,
+        })
 
         # AI 청산 분석 (비동기)
         asyncio.create_task(self._send_exit_analysis(symbol, side, entry, price, reason, pnl_pct))
@@ -988,12 +1034,27 @@ class IchimokuTrader:
             logger.warning("유효한 심볼 데이터가 없습니다.")
             return
 
-        # 기존 포지션 청산 체크
+        # 기존 포지션 청산 체크 + 캔들 극값 로깅
         positions_updated = False
         for symbol, pos in list(self.positions.items()):
             row = latest_rows.get(symbol)
             if row is None:
                 continue
+
+            # 캔들 극값 기록 (보유 중인 포지션)
+            self.trade_logger.log_candle_extreme(
+                symbol, self.strategy_mode, pos["side"], float(pos["entry_price"]),
+                float(row["high"]), float(row["low"]), float(row["close"]),
+                row.get("timestamp", datetime.utcnow()),
+            )
+
+            # worst_pnl 추적 (청산 로그용)
+            if pos["side"] == "long":
+                worst = (float(row["low"]) / float(pos["entry_price"]) - 1) * 100
+            else:
+                worst = (1 - float(row["high"]) / float(pos["entry_price"])) * 100
+            if worst < pos.get("worst_pnl", 0):
+                pos["worst_pnl"] = worst
 
             old_trailing = pos.get("trailing", False)
             old_best = pos.get("best_pnl", 0)
@@ -1009,6 +1070,9 @@ class IchimokuTrader:
 
         if positions_updated:
             self._save_state()
+
+        # 청산 후 가격 추적
+        self._check_post_exits(latest_rows)
 
         # 진입 후보 생성
         candidates = []
@@ -1054,6 +1118,54 @@ class IchimokuTrader:
             free -= used_margin
             if free <= 0:
                 break
+
+    def _check_post_exits(self, latest_rows: Dict[str, pd.Series]):
+        """청산 후 가격 추적 — 4h/12h/24h/48h 후 가격 기록."""
+        now = datetime.utcnow()
+        remaining = []
+        for pe in self._pending_post_exits:
+            sym = pe["symbol"]
+            row = latest_rows.get(sym)
+            if row is None:
+                remaining.append(pe)
+                continue
+
+            price_now = float(row["close"])
+            hours_elapsed = (now - pe["exit_time"]).total_seconds() / 3600
+            side = pe["side"]
+
+            # max favorable / adverse 업데이트
+            if side == "long":
+                fav = (float(row["high"]) / pe["exit_price"] - 1) * 100
+                adv = (float(row["low"]) / pe["exit_price"] - 1) * 100
+            else:
+                fav = (1 - float(row["low"]) / pe["exit_price"]) * 100
+                adv = (1 - float(row["high"]) / pe["exit_price"]) * 100
+            pe["max_favorable"] = max(pe["max_favorable"], fav)
+            pe["max_adverse"] = min(pe["max_adverse"], adv)
+
+            # 체크 시점 도달 확인
+            new_checked = []
+            for h in pe["check_hours"]:
+                if h not in pe["checked"] and hours_elapsed >= h:
+                    self.trade_logger.log_post_exit(
+                        sym, pe["strategy"], side, pe["exit_price"],
+                        pe["exit_time"], pe["exit_reason"],
+                        hours_after=h, price_now=price_now,
+                        max_favorable=pe["max_favorable"],
+                        max_adverse=pe["max_adverse"],
+                    )
+                    new_checked.append(h)
+            pe["checked"].extend(new_checked)
+
+            # 모든 체크 완료 시 제거
+            if len(pe["checked"]) >= len(pe["check_hours"]):
+                continue
+            # 48시간 초과 시 제거
+            if hours_elapsed > 52:
+                continue
+            remaining.append(pe)
+        self._pending_post_exits = remaining
 
     def _fetch_fractals_df(self, symbol: str, limit: int = 200) -> Optional[pd.DataFrame]:
         """프랙탈 지표 계산"""

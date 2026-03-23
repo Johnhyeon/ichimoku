@@ -24,6 +24,7 @@ from src.bybit_client import BybitClient
 from src.data_fetcher import DataFetcher
 from src.strategy import STABLECOINS, fmt_price as _fmt_price
 from src.telegram_bot import TelegramNotifier, TelegramBot
+from src.trade_logger import TradeLogger
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class MA100Trader:
         # 텔레그램
         self.notifier = notifier or TelegramNotifier()
         self.telegram_bot = telegram_bot
+        self.trade_logger = TradeLogger()
 
         # 포지션 상태
         self.positions: Dict[str, dict] = {}
@@ -595,6 +597,18 @@ class MA100Trader:
         )
         self.notifier.send_sync(message)
 
+        # 거래 로그 (전건 누적)
+        self.trade_logger.log_exit(
+            symbol, side, entry, price, pnl_pct, pnl_usd, reason,
+            strategy="ma100", leverage=self.params["leverage"],
+            qty=qty, entry_time=pos.get("entry_time"),
+            best_pnl_pct=0, worst_pnl_pct=0,
+            best_price=pos.get("highest", entry),
+            worst_price=pos.get("lowest", entry),
+            trailing_activated=pos.get("trailing", False),
+            trail_stop_price=pos.get("trail_stop", 0),
+        )
+
         # 거래 이력 저장
         self.trade_history.append({
             "symbol": symbol,
@@ -605,6 +619,7 @@ class MA100Trader:
             "pnl_usd": pnl_usd,
             "reason": reason,
             "closed_at": datetime.utcnow(),
+            "strategy": "ma100",
         })
 
         if len(self.trade_history) > 20:

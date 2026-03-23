@@ -28,6 +28,7 @@ from src.data_fetcher import DataFetcher
 from src.live_surge_mirror_short import MirrorShortParams, overheat_confirmed
 from src.telegram_bot import TelegramNotifier, TelegramBot
 from src.strategy import MAJOR_COINS, STABLECOINS, fmt_price as _fmt_price
+from src.trade_logger import TradeLogger
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ class SurgeTrader:
 
         # 텔레그램 (외부 주입 또는 자체 생성)
         self.notifier = notifier or TelegramNotifier()
+        self.trade_logger = TradeLogger()
         self.telegram_bot = telegram_bot or TelegramBot(self.notifier)
         self.telegram_bot.set_callbacks(
             get_balance=self._get_balance_full,
@@ -455,6 +457,13 @@ class SurgeTrader:
 
                 self.notifier.notify_exit(symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason, strategy="mirror_short")
 
+                self.trade_logger.log_exit(
+                    symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason,
+                    strategy="mirror_short", leverage=self.params.get("leverage", 5),
+                    qty=float(pos.get("size", 0)), entry_time=pos.get("entry_time"),
+                    trailing_activated=pos.get("trailing_active", False),
+                )
+
                 self.trade_history.append({
                     "symbol": symbol,
                     "side": side,
@@ -464,6 +473,7 @@ class SurgeTrader:
                     "pnl_usd": pnl_usd,
                     "reason": reason,
                     "closed_at": datetime.utcnow(),
+                    "strategy": "mirror_short",
                 })
 
                 if len(self.trade_history) > 20:
