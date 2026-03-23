@@ -453,7 +453,7 @@ class SurgeTrader:
                 short_sym = symbol.split('/')[0]
                 logger.info(f"[MANUAL CLOSE] {short_sym} 수동 청산 감지 | PnL: {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
 
-                self.notifier.notify_exit(symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason)
+                self.notifier.notify_exit(symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason, strategy="mirror_short")
 
                 self.trade_history.append({
                     "symbol": symbol,

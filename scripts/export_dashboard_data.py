@@ -191,7 +191,7 @@ def git_push():
     """docs/data.json을 git에 커밋하고 push."""
     try:
         subprocess.run(
-            ["git", "add", OUTPUT],
+            ["git", "add", "-f", OUTPUT],
             cwd=".", capture_output=True, check=True
         )
         result = subprocess.run(

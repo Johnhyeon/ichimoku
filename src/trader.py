@@ -540,7 +540,7 @@ class IchimokuTrader:
         }
 
         # 텔레그램 알림
-        self.notifier.notify_entry(symbol, side, price, qty, stop_loss, take_profit)
+        self.notifier.notify_entry(symbol, side, price, qty, stop_loss, take_profit, strategy=self.strategy_mode)
 
         # AI 진입 이유 분석 (비동기)
         if df is not None:
@@ -555,6 +555,26 @@ class IchimokuTrader:
     async def _send_entry_analysis(self, symbol: str, df: pd.DataFrame, side: str):
         """진입 이유 AI 분석 전송"""
         try:
+            if self.strategy_mode == "fractals":
+                # Fractals: 간단 분석 (이치모쿠 지표 없음)
+                row = df.iloc[-1]
+                short_sym = symbol.split('/')[0]
+                emoji = "🟢" if side == "long" else "🔴"
+                frac_level = float(row.get("last_fractal_high" if side == "long" else "last_fractal_low", 0))
+                ema_f = float(row.get("ema_fast", 0))
+                ema_s = float(row.get("ema_slow", 0))
+                rsi = float(row.get("rsi", 50))
+                adx = float(row.get("adx", 0))
+                trend = "UP" if ema_f > ema_s else "DOWN"
+                action = "고점 돌파" if side == "long" else "저점 이탈"
+                message = (
+                    f"{emoji} <b>{short_sym} Vertex {side.upper()}</b>\n\n"
+                    f"프랙탈 {action}: ${frac_level:,.4f}\n"
+                    f"EMA20/50: {trend} | RSI: {rsi:.0f} | ADX: {adx:.0f}"
+                )
+                self.notifier.send_sync(message)
+                return
+
             analysis = await self.market_analyzer.analyze_entry_reason(
                 symbol, df, side, self.btc_uptrend
             )
@@ -598,7 +618,7 @@ class IchimokuTrader:
         pnl_usd = pnl_pct / 100 * (entry * qty) / self.leverage
 
         # 텔레그램 알림
-        self.notifier.notify_exit(symbol, side, entry, price, pnl_pct, pnl_usd, reason)
+        self.notifier.notify_exit(symbol, side, entry, price, pnl_pct, pnl_usd, reason, strategy=self.strategy_mode)
 
         # AI 청산 분석 (비동기)
         asyncio.create_task(self._send_exit_analysis(symbol, side, entry, price, reason, pnl_pct))

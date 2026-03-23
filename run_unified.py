@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-통합 봇 - 이치모쿠 + 미러숏 + MA100 전략 동시 실행
+통합 봇 - Vertex + 미러숏 + MA100 전략 동시 실행
 
 하나의 프로세스에서 세 전략을 함께 실행합니다:
   - 이치모쿠: 4시간봉 기반 SHORT 전략 (레버리지 20x)
@@ -201,7 +201,7 @@ class UnifiedTrader:
         """전략별 레버리지 변경"""
         if strategy == 'ichimoku':
             self.ichimoku.leverage = value
-            logger.info(f"[설정] 이치모쿠 레버리지 → {value}x")
+            logger.info(f"[설정] Vertex 레버리지 → {value}x")
         elif strategy == 'surge':
             self.surge.params['leverage'] = value
             logger.info(f"[설정] 미러숏 레버리지 → {value}x")
@@ -213,7 +213,7 @@ class UnifiedTrader:
         """전략별 진입비율 변경"""
         if strategy == 'ichimoku':
             self.ichimoku.position_pct = value
-            logger.info(f"[설정] 이치모쿠 진입비율 → {value*100:.0f}%")
+            logger.info(f"[설정] Vertex 진입비율 → {value*100:.0f}%")
         elif strategy == 'surge':
             self.surge.params['position_pct'] = value
             logger.info(f"[설정] 미러숏 진입비율 → {value*100:.0f}%")
@@ -310,14 +310,14 @@ class UnifiedTrader:
                     self._record_balance()
 
                 except Exception as e:
-                    logger.error(f"[이치모쿠] 루프 오류: {e}")
-                    self.notifier.send_sync(f"⚠️ 이치모쿠 오류: {e}")
+                    logger.error(f"[Vertex] 루프 오류: {e}")
+                    self.notifier.send_sync(f"⚠️ Vertex 오류: {e}")
 
             # 다음 4시간봉 캔들까지 대기
             next_candle = self.ichimoku.data_fetcher.get_next_candle_time("4h")
             now = datetime.utcnow()
             sleep_seconds = max(60, (next_candle - now).total_seconds())
-            logger.info(f"[이치모쿠] 다음 캔들까지 {sleep_seconds/60:.1f}분 대기")
+            logger.info(f"[Vertex] 다음 캔들까지 {sleep_seconds/60:.1f}분 대기")
             await asyncio.sleep(sleep_seconds)
 
     async def _ichimoku_position_loop(self):
@@ -327,7 +327,7 @@ class UnifiedTrader:
                 try:
                     self.ichimoku.check_positions()
                 except Exception as e:
-                    logger.error(f"[이치모쿠] 포지션 체크 오류: {e}")
+                    logger.error(f"[Vertex] 포지션 체크 오류: {e}")
 
             await asyncio.sleep(300)  # 5분
 
@@ -423,7 +423,7 @@ class UnifiedTrader:
         )
         self.notifier.send_sync(
             f"🚀 <b>통합 봇 시작</b> [{mode}]\n\n"
-            f"⛩️ 이치모쿠: 4시간봉 SHORT (20x)\n"
+            f"🔷 Vertex: 4시간봉 L+S (10x)\n"
             f"📉 미러숏: 5분봉 SHORT (5x)\n"
             f"📊 MA100: 일봉 SHORT ONLY (5x)\n"
             f"{dca_info}"
@@ -463,7 +463,7 @@ class UnifiedTrader:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="통합 봇 - 이치모쿠 + 미러숏 + MA100 전략 동시 실행"
+        description="통합 봇 - Vertex + 미러숏 + MA100 전략 동시 실행"
     )
     parser.add_argument(
         "--paper", action="store_true",
@@ -504,7 +504,7 @@ def main():
     args = parser.parse_args()
 
     logger.info("=" * 60)
-    logger.info("통합 봇 - 이치모쿠 + 미러숏 + MA100 전략")
+    logger.info("통합 봇 - Vertex + 미러숏 + MA100 전략")
     logger.info("=" * 60)
 
     mode = "PAPER" if args.paper else "LIVE"

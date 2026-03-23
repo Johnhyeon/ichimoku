@@ -869,7 +869,7 @@ class MA100Trader:
                     if cancelled > 0:
                         logger.info(f"[MA100] {symbol} DCA 미체결 주문 {cancelled}건 취소")
 
-                self.notifier.notify_exit(symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason)
+                self.notifier.notify_exit(symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason, strategy="ma100")
 
                 self.trade_history.append({
                     "symbol": symbol,

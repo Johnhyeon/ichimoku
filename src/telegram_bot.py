@@ -74,15 +74,17 @@ class TelegramNotifier:
         except RuntimeError:
             asyncio.run(self.send_message(text))
 
-    def notify_entry(self, symbol: str, side: str, price: float, qty: float, sl: float, tp: float):
+    def notify_entry(self, symbol: str, side: str, price: float, qty: float, sl: float, tp: float, strategy: str = ""):
         """진입 알림"""
         emoji = "🟢" if side == "long" else "🔴"
         short_sym = symbol.split('/')[0]
         sl_pct = abs((sl - price) / price * 100)
         tp_pct = abs((tp - price) / price * 100)
+        strat_label = {"fractals": "🔷 Vertex", "ichimoku": "🔷 Vertex", "mirror_short": "📉 미러숏", "surge": "📉 미러숏", "ma100": "📊 MA100"}.get(strategy, "")
+        strat_line = f"\n전략: {strat_label}" if strat_label else ""
 
         text = f"""
-{emoji} <b>{side.upper()} 진입</b>
+{emoji} <b>{side.upper()} 진입</b>{strat_line}
 
 코인: {short_sym}
 가격: {fmt_price(price)}
@@ -92,14 +94,16 @@ class TelegramNotifier:
 """
         self.send_sync(text.strip())
 
-    def notify_exit(self, symbol: str, side: str, entry: float, exit_price: float, pnl_pct: float, pnl_usd: float, reason: str):
+    def notify_exit(self, symbol: str, side: str, entry: float, exit_price: float, pnl_pct: float, pnl_usd: float, reason: str, strategy: str = ""):
         """청산 알림"""
         emoji = "💰" if pnl_pct >= 0 else "💸"
         short_sym = symbol.split('/')[0]
         sign = "+" if pnl_pct >= 0 else ""
+        strat_label = {"fractals": "🔷 Vertex", "ichimoku": "🔷 Vertex", "mirror_short": "📉 미러숏", "surge": "📉 미러숏", "ma100": "📊 MA100"}.get(strategy, "")
+        strat_line = f"\n전략: {strat_label}" if strat_label else ""
 
         text = f"""
-{emoji} <b>청산 완료</b>
+{emoji} <b>청산 완료</b>{strat_line}
 
 코인: {short_sym}
 방향: {side.upper()}
