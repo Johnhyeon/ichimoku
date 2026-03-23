@@ -95,7 +95,7 @@ class TestParameters:
         assert FRACTALS_PARAMS["sl_pct"] == 3.0
 
     def test_tp_pct(self):
-        assert FRACTALS_PARAMS["tp_pct"] == 10.0
+        assert FRACTALS_PARAMS["tp_pct"] == 0  # 거래소 트레일링, TP 없음
 
     def test_trail_start(self):
         assert FRACTALS_PARAMS["trail_start_pct"] == 2.0
@@ -120,9 +120,9 @@ class TestParameters:
     def test_adx_filter(self):
         assert FRACTALS_PARAMS["adx_min"] == 20
 
-    def test_tp_greater_than_sl(self):
-        """손익비 > 1 확인."""
-        assert FRACTALS_PARAMS["tp_pct"] > FRACTALS_PARAMS["sl_pct"]
+    def test_tp_disabled(self):
+        """TP 비활성 (거래소 트레일링으로 대체)."""
+        assert FRACTALS_PARAMS["tp_pct"] == 0
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -209,20 +209,20 @@ class TestEntrySignal:
         sig = get_fractals_entry_signal("TEST/USDT:USDT", curr, prev, None)
         assert sig["stop_loss"] < sig["price"]
 
-    def test_long_tp_above_entry(self, long_entry_rows):
+    def test_long_tp_zero_when_disabled(self, long_entry_rows):
         prev, curr = long_entry_rows
         sig = get_fractals_entry_signal("TEST/USDT:USDT", curr, prev, None)
-        assert sig["take_profit"] > sig["price"]
+        assert sig["take_profit"] == 0
 
     def test_short_sl_above_entry(self, short_entry_rows):
         prev, curr = short_entry_rows
         sig = get_fractals_entry_signal("TEST/USDT:USDT", curr, prev, None)
         assert sig["stop_loss"] > sig["price"]
 
-    def test_short_tp_below_entry(self, short_entry_rows):
+    def test_short_tp_zero_when_disabled(self, short_entry_rows):
         prev, curr = short_entry_rows
         sig = get_fractals_entry_signal("TEST/USDT:USDT", curr, prev, None)
-        assert sig["take_profit"] < sig["price"]
+        assert sig["take_profit"] == 0
 
     def test_sl_distance_correct(self, long_entry_rows):
         prev, curr = long_entry_rows
@@ -230,11 +230,11 @@ class TestEntrySignal:
         sl_dist = abs(sig["price"] - sig["stop_loss"]) / sig["price"] * 100
         assert abs(sl_dist - FRACTALS_PARAMS["sl_pct"]) < 0.01
 
-    def test_tp_distance_correct(self, short_entry_rows):
+    def test_tp_is_zero(self, short_entry_rows):
+        """TP=0이면 take_profit=0."""
         prev, curr = short_entry_rows
         sig = get_fractals_entry_signal("TEST/USDT:USDT", curr, prev, None)
-        tp_dist = abs(sig["price"] - sig["take_profit"]) / sig["price"] * 100
-        assert abs(tp_dist - FRACTALS_PARAMS["tp_pct"]) < 0.01
+        assert sig["take_profit"] == 0
 
     def test_symbol_preserved(self, long_entry_rows):
         prev, curr = long_entry_rows

@@ -23,7 +23,7 @@ FRACTALS_POSITION_PCT = 0.05
 FRACTALS_PARAMS = {
     "fractal_period": 5,
     "sl_pct": 3.0,
-    "tp_pct": 10.0,
+    "tp_pct": 0,  # 거래소 트레일링이 수익 관리, TP 제한 없음
     "trail_start_pct": 2.0,
     "trail_pct": 1.5,
     "cooldown_candles": 2,
@@ -158,10 +158,10 @@ def get_fractals_entry_signal(
 
     if side == "long":
         stop_loss = price * (1 - sl_pct / 100)
-        take_profit = price * (1 + tp_pct / 100)
+        take_profit = price * (1 + tp_pct / 100) if tp_pct > 0 else 0
     else:
         stop_loss = price * (1 + sl_pct / 100)
-        take_profit = price * (1 - tp_pct / 100)
+        take_profit = price * (1 - tp_pct / 100) if tp_pct > 0 else 0
 
     return {
         "symbol": symbol,
@@ -213,12 +213,13 @@ def check_fractals_exit(
     if side == "short" and high >= sl:
         return {"reason": "SL", "price": sl}
 
-    # 2. TP 체크
-    tp = float(pos["take_profit"])
-    if side == "long" and high >= tp:
-        return {"reason": "TP", "price": tp}
-    if side == "short" and low <= tp:
-        return {"reason": "TP", "price": tp}
+    # 2. TP 체크 (tp > 0일 때만)
+    tp = float(pos.get("take_profit", 0))
+    if tp > 0:
+        if side == "long" and high >= tp:
+            return {"reason": "TP", "price": tp}
+        if side == "short" and low <= tp:
+            return {"reason": "TP", "price": tp}
 
     # 3. 트레일링 스탑
     best = pos.get("best_pnl", 0)

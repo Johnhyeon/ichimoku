@@ -512,11 +512,17 @@ class IchimokuTrader:
             try:
                 order_side = "buy" if side == "long" else "sell"
                 # SL/TP를 바이빗 서버에 함께 등록 (봇 다운 시에도 작동)
-                self.client.market_order_with_sl_tp(
-                    symbol, order_side, qty,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit
-                )
+                if take_profit and take_profit > 0:
+                    self.client.market_order_with_sl_tp(
+                        symbol, order_side, qty,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit
+                    )
+                else:
+                    self.client.market_order_with_sl_tp(
+                        symbol, order_side, qty,
+                        stop_loss=stop_loss
+                    )
             except Exception as e:
                 logger.error(f"진입 실패 ({symbol}): {e}")
                 self.notifier.notify_error(f"진입 실패: {symbol}\n{e}")
