@@ -522,6 +522,20 @@ class IchimokuTrader:
                 self.notifier.notify_error(f"진입 실패: {symbol}\n{e}")
                 return 0.0
 
+            # Fractals: 거래소 트레일링 스탑 설정
+            if self.strategy_mode == "fractals":
+                try:
+                    from src.fractals_strategy import FRACTALS_PARAMS as _fp
+                    trail_dist = price * _fp["trail_pct"] / 100
+                    if side == "long":
+                        active_price = price * (1 + _fp["trail_start_pct"] / 100)
+                    else:
+                        active_price = price * (1 - _fp["trail_start_pct"] / 100)
+                    self.client.set_trailing_stop(symbol, trail_dist, active_price)
+                    logger.info(f"[Vertex] {symbol} 거래소 트레일링 설정: dist={trail_dist:.4f}, active={active_price:.4f}")
+                except Exception as e:
+                    logger.warning(f"거래소 트레일링 설정 실패: {e}")
+
         # 포지션 상태 업데이트
         self.positions[symbol] = {
             "symbol": symbol,
