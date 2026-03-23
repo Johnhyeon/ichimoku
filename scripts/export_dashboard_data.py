@@ -208,6 +208,10 @@ def git_push():
             cwd=".", capture_output=True, check=True
         )
         subprocess.run(
+            ["git", "pull", "--rebase"],
+            cwd=".", capture_output=True
+        )
+        subprocess.run(
             ["git", "push"],
             cwd=".", capture_output=True, check=True
         )
