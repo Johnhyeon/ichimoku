@@ -1141,6 +1141,7 @@ class MA100Trader:
                 pass
 
         signals = []
+        now = datetime.utcnow()
         for symbol in usdt_perps:
             # 이미 포지션 있거나 다른 전략이 보유 중이면 스킵
             if symbol in self.positions or symbol in excluded:
@@ -1150,13 +1151,23 @@ class MA100Trader:
             last_exit = self.last_exit_times.get(symbol)
             if last_exit:
                 cooldown = timedelta(days=self.params['cooldown_days'])
-                if datetime.utcnow() - last_exit < cooldown:
+                if now - last_exit < cooldown:
                     continue
 
             try:
                 df = self._get_1d_data(symbol, limit=150)
                 if df is None:
                     continue
+
+                # 최신 캔들 시간 체크: 일봉이 30시간 이내인 경우만 (24h + 6h 여유)
+                if "timestamp" in df.columns and len(df) > 0:
+                    last_ts = pd.Timestamp(df.iloc[-1]["timestamp"])
+                    if last_ts.tzinfo is not None:
+                        last_ts = last_ts.tz_localize(None)
+                    age_hours = (now - last_ts.to_pydatetime()).total_seconds() / 3600
+                    if age_hours > 30:
+                        continue
+
                 signal = self._detect_signal(symbol, df)
                 if signal:
                     signals.append(signal)

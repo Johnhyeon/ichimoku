@@ -831,6 +831,7 @@ class SurgeTrader:
                 pass
 
         signals = []
+        now = datetime.utcnow()
         for symbol in scan_symbols:
             # 이미 포지션 있거나 다른 전략이 보유 중이면 스킵
             if symbol in self.positions or symbol in excluded:
@@ -840,13 +841,23 @@ class SurgeTrader:
             last_exit = self.last_exit_times.get(symbol)
             if last_exit:
                 cooldown = timedelta(minutes=15)
-                if datetime.utcnow() - last_exit < cooldown:
+                if now - last_exit < cooldown:
                     continue
 
             try:
                 df = self._get_5m_data(symbol, limit=100)
                 if df is None:
                     continue
+
+                # 최신 캔들 시간 체크: 5분봉이 15분 이내인 경우만
+                if "timestamp" in df.columns and len(df) > 0:
+                    last_ts = pd.Timestamp(df.iloc[-1]["timestamp"])
+                    if last_ts.tzinfo is not None:
+                        last_ts = last_ts.tz_localize(None)
+                    age_min = (now - last_ts.to_pydatetime()).total_seconds() / 60
+                    if age_min > 15:
+                        continue
+
                 signal = self._detect_mirror_short_signal(symbol, df)
                 if signal:
                     signals.append(signal)
