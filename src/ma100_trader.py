@@ -647,17 +647,34 @@ class MA100Trader:
             side = pos['side']
             trail_dist = entry_price * self.params['trail_pct'] / 100
 
-            if side == "long":
-                active_price = entry_price * (1 + self.params['trail_start_pct'] / 100)
+            # 현재가 조회 — 이미 수익 중이면 activePrice 없이 즉시 활성화
+            try:
+                ticker = self.client.get_ticker(symbol)
+                current_price = float(ticker["last"])
+            except Exception:
+                current_price = entry_price
+
+            if side == "short":
+                pnl_pct = (entry_price - current_price) / entry_price * 100
             else:
-                active_price = entry_price * (1 - self.params['trail_start_pct'] / 100)
+                pnl_pct = (current_price - entry_price) / entry_price * 100
+
+            if pnl_pct >= self.params['trail_start_pct']:
+                # 이미 트레일링 활성화 조건 충족 → activePrice 없이 즉시 활성
+                active_price = None
+            else:
+                if side == "long":
+                    active_price = entry_price * (1 + self.params['trail_start_pct'] / 100)
+                else:
+                    active_price = entry_price * (1 - self.params['trail_start_pct'] / 100)
 
             self.client.set_trailing_stop(symbol, trail_dist, active_price)
             short_sym = symbol.split('/')[0]
-            logger.info(f"[MA100] {short_sym} 트레일링 스톱 보완 설정 완료")
+            ap_str = f" active={active_price:.6f}" if active_price else " (즉시 활성)"
+            logger.info(f"[MA100] {short_sym} 트레일링 스톱 설정:{ap_str}")
 
         except Exception as e:
-            logger.warning(f"[MA100] {symbol} 트레일링 스톱 보완 실패: {e}")
+            logger.warning(f"[MA100] {symbol} 트레일링 스톱 설정 실패: {e}")
 
     def _check_dca_fills(self, symbol: str):
         """DCA 지정가 주문 체결 여부 확인 및 평균단가/SL 업데이트"""
