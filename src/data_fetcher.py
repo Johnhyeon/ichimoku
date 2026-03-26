@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class DataFetcher:
     """캔들 데이터 수집기 (레이트 리밋 내장)"""
 
-    # Bybit API Rate Limit: 초당 10회
-    _MIN_INTERVAL = 0.12  # 120ms 간격 = 초당 ~8회 (여유분 확보)
+    # Bybit API Rate Limit: 초당 10회, 3전략 동시 사용 고려
+    _MIN_INTERVAL = 0.2  # 200ms 간격 = 초당 5회 (3전략 동시 여유)
     _lock = threading.Lock()
     _last_call_time = 0.0
 
