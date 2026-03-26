@@ -89,6 +89,9 @@ class MA100Trader:
         # 상태 저장 파일
         self.state_file = "data/ma100_bot_state.json"
 
+        # 재시작 시 첫 스캔은 진입 스킵
+        self._first_run = True
+
         # 시작 로그
         mode = "PAPER" if self.paper else "LIVE"
         net = "TESTNET" if self.testnet else "MAINNET"
@@ -1116,6 +1119,12 @@ class MA100Trader:
             df = self._get_1d_data(symbol, limit=150)
             if df is not None:
                 self._check_exit_signals(symbol, df)
+
+        # 재시작 첫 스캔은 진입 스킵 (청산 체크만)
+        if self._first_run:
+            self._first_run = False
+            logger.info("[MA100] 재시작 첫 스캔 — 진입 스킵, 다음 일봉부터 진입")
+            return
 
         # 최대 포지션 수 체크
         if len(self.positions) >= self.max_positions:

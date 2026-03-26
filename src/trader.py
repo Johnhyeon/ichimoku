@@ -118,6 +118,9 @@ class IchimokuTrader:
         # 청산 후 가격 추적 대기열
         self._pending_post_exits: list = []
 
+        # 재시작 시 첫 스캔은 진입 스킵 (청산 체크만 수행)
+        self._first_run = True
+
         # 시작 로그
         mode = "PAPER" if self.paper else "LIVE"
         logger.info(f"IchimokuTrader 시작 - 모드: {mode}, 테스트넷: {self.testnet}")
@@ -1097,6 +1100,12 @@ class IchimokuTrader:
 
         # 청산 후 가격 추적
         self._check_post_exits(latest_rows)
+
+        # 재시작 첫 스캔은 진입 스킵 (청산 체크만)
+        if self._first_run:
+            self._first_run = False
+            logger.info("[Vertex] 재시작 첫 스캔 — 진입 스킵, 다음 캔들부터 진입")
+            return
 
         # 진입 후보 생성 (시그널 캔들이 1캔들 이내일 때만)
         now = datetime.utcnow()

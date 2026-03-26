@@ -131,6 +131,9 @@ class SurgeTrader:
         # 상태 저장 파일 경로
         self.state_file = "data/mirror_short_bot_state.json"
 
+        # 재시작 시 첫 스캔은 진입 스킵
+        self._first_run = True
+
         # 실제 잔고로 초기 자금 설정
         if not self.paper:
             try:
@@ -799,6 +802,12 @@ class SurgeTrader:
 
         if free_balance <= 0:
             logger.warning("[WAIT] 사용 가능 잔고 없음")
+            return
+
+        # 재시작 첫 스캔은 진입 스킵 (청산 체크만)
+        if self._first_run:
+            self._first_run = False
+            logger.info("[미러숏] 재시작 첫 스캔 — 진입 스킵, 다음 스캔부터 진입")
             return
 
         # Mirror Short 스캔
