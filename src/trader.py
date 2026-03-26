@@ -806,8 +806,31 @@ class IchimokuTrader:
                 # 텔레그램 알림
                 self.notifier.notify_exit(
                     symbol, side, entry, exit_price,
-                    pnl_pct, pnl_usd, reason
+                    pnl_pct, pnl_usd, reason, strategy=self.strategy_mode
                 )
+
+                # 거래 로그 (전건 누적 CSV)
+                entry_time = pos.get("entry_time")
+                margin = (entry * qty) / self.leverage if self.leverage > 0 else 0
+                self.trade_logger.log_exit(
+                    symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason,
+                    strategy=self.strategy_mode, leverage=self.leverage,
+                    qty=qty, margin_usdt=margin, entry_time=entry_time,
+                    best_pnl_pct=pos.get("best_pnl", 0),
+                    worst_pnl_pct=pos.get("worst_pnl", 0),
+                    best_price=pos.get("highest", entry),
+                    worst_price=pos.get("lowest", entry),
+                    trailing_activated=pos.get("trailing", False),
+                    trail_stop_price=pos.get("trail_stop", 0),
+                )
+
+                # 청산 후 가격 추적 예약
+                self._pending_post_exits.append({
+                    "symbol": symbol, "strategy": self.strategy_mode, "side": side,
+                    "exit_price": exit_price, "exit_time": datetime.utcnow(), "exit_reason": reason,
+                    "check_hours": [4, 12, 24, 48], "checked": [],
+                    "max_favorable": 0, "max_adverse": 0,
+                })
 
                 # 거래 이력 저장
                 self.trade_history.append({
@@ -819,6 +842,7 @@ class IchimokuTrader:
                     "pnl_usd": pnl_usd,
                     "reason": reason,
                     "closed_at": datetime.utcnow(),
+                    "strategy": self.strategy_mode,
                 })
 
                 # 최근 20개만 유지

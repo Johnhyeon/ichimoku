@@ -890,6 +890,18 @@ class MA100Trader:
 
                 self.notifier.notify_exit(symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason, strategy="ma100")
 
+                # 거래 로그 (전건 누적 CSV)
+                self.trade_logger.log_exit(
+                    symbol, side, entry, exit_price, pnl_pct, pnl_usd, reason,
+                    strategy="ma100", leverage=self.params["leverage"],
+                    qty=qty, entry_time=pos.get("entry_time"),
+                    best_pnl_pct=0, worst_pnl_pct=0,
+                    best_price=pos.get("highest", entry),
+                    worst_price=pos.get("lowest", entry),
+                    trailing_activated=pos.get("trailing", False),
+                    trail_stop_price=pos.get("trail_stop", 0),
+                )
+
                 self.trade_history.append({
                     "symbol": symbol,
                     "side": side,
@@ -899,6 +911,7 @@ class MA100Trader:
                     "pnl_usd": pnl_usd,
                     "reason": reason,
                     "closed_at": datetime.utcnow(),
+                    "strategy": "ma100",
                 })
 
                 if len(self.trade_history) > 20:
@@ -1001,22 +1014,80 @@ class MA100Trader:
     # ==================== 메인 실행 ====================
 
     def check_positions(self):
-        """포지션 상태만 체크 (수동/거래소 청산 감지 + 트레일링 + DCA 체결 확인). 자주 호출용."""
+        """포지션 상태만 체크 (수동/거래소 청산 감지 + 가격 추적 + 트레일링). 5분마다 호출."""
         if not self.positions:
             return
 
         self._check_manual_closes()
 
+        state_changed = False
         for symbol in list(self.positions.keys()):
+            pos = self.positions.get(symbol)
+            if not pos:
+                continue
+
             self._ensure_trailing_stop(symbol)
 
+            # 현재가 조회 → lowest/highest 업데이트
+            try:
+                ticker = self.client.get_ticker(symbol)
+                current_price = float(ticker["last"])
+                side = pos["side"]
+                entry = float(pos["entry_price"])
+
+                # highest/lowest 추적
+                if current_price > pos.get("highest", 0):
+                    pos["highest"] = current_price
+                    state_changed = True
+                if current_price < pos.get("lowest", float("inf")):
+                    pos["lowest"] = current_price
+                    state_changed = True
+
+                # 봇 레벨 트레일링 체크 (거래소 트레일링 백업)
+                trail_start = self.params["trail_start_pct"]
+                trail_pct = self.params["trail_pct"]
+
+                if side == "short":
+                    pnl_pct = (entry - current_price) / entry * 100
+                    if pnl_pct >= trail_start:
+                        if not pos.get("trailing"):
+                            pos["trailing"] = True
+                            pos["trail_activated_at"] = current_price
+                            logger.info(f"[MA100 TRAIL] {symbol.split('/')[0]} 트레일링 활성화 (수익률: {pnl_pct:.1f}%)")
+                            state_changed = True
+                        lowest = pos.get("lowest", entry)
+                        trail_stop = lowest * (1 + trail_pct / 100)
+                        pos["trail_stop"] = trail_stop
+                        if current_price >= trail_stop:
+                            self._close_position(symbol, {"price": current_price, "reason": "트레일링 스톱"})
+                            continue
+                else:  # long
+                    pnl_pct = (current_price - entry) / entry * 100
+                    if pnl_pct >= trail_start:
+                        if not pos.get("trailing"):
+                            pos["trailing"] = True
+                            pos["trail_activated_at"] = current_price
+                            logger.info(f"[MA100 TRAIL] {symbol.split('/')[0]} 트레일링 활성화 (수익률: {pnl_pct:.1f}%)")
+                            state_changed = True
+                        highest = pos.get("highest", entry)
+                        trail_stop = highest * (1 - trail_pct / 100)
+                        pos["trail_stop"] = trail_stop
+                        if current_price <= trail_stop:
+                            self._close_position(symbol, {"price": current_price, "reason": "트레일링 스톱"})
+                            continue
+
+            except Exception as e:
+                logger.debug(f"MA100 가격 추적 실패 ({symbol}): {e}")
+
             # DCA 지정가 주문 체결 여부 확인
-            pos = self.positions.get(symbol)
             if pos and pos.get("pending_dca"):
                 try:
                     self._check_dca_fills(symbol)
                 except Exception as e:
                     logger.debug(f"MA100 DCA 체결 확인 실패 ({symbol}): {e}")
+
+        if state_changed:
+            self._save_state()
 
     def run_once(self):
         """일봉 갱신 시 전체 스캔 + 시그널 진입"""
