@@ -1098,7 +1098,8 @@ class IchimokuTrader:
         # 청산 후 가격 추적
         self._check_post_exits(latest_rows)
 
-        # 진입 후보 생성
+        # 진입 후보 생성 (시그널 캔들이 1캔들 이내일 때만)
+        now = datetime.utcnow()
         candidates = []
         for symbol, row in latest_rows.items():
             if symbol in self.positions:
@@ -1106,6 +1107,17 @@ class IchimokuTrader:
             prev = prev_rows.get(symbol)
             if prev is None:
                 continue
+
+            # 캔들 시간 체크: 최신 캔들이 4시간 이내에 마감된 것인지
+            candle_time = row.get("timestamp")
+            if candle_time is not None:
+                candle_ts = pd.Timestamp(candle_time)
+                if candle_ts.tzinfo is not None:
+                    candle_ts = candle_ts.tz_localize(None)
+                age_hours = (now - candle_ts.to_pydatetime()).total_seconds() / 3600
+                if age_hours > 5:  # 4h + 1h 여유
+                    continue  # 오래된 시그널 스킵
+
             ecc = self.exit_candle_counts.get(symbol)
             sig = get_fractals_entry_signal(symbol, row, prev, ecc, params)
             if sig:
