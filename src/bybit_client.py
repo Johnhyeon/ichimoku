@@ -664,6 +664,17 @@ class BybitClient:
         try:
             bybit_symbol = symbol.replace('/USDT:USDT', 'USDT')
 
+            # 거래소 price precision에 맞춤
+            try:
+                trailing_stop = float(self.exchange.price_to_precision(symbol, trailing_stop))
+                if active_price is not None:
+                    active_price = float(self.exchange.price_to_precision(symbol, active_price))
+            except Exception:
+                pass  # precision 못 가져오면 원본 사용
+
+            if trailing_stop <= 0:
+                return False
+
             params = {
                 'category': 'linear',
                 'symbol': bybit_symbol,
@@ -677,15 +688,16 @@ class BybitClient:
             response = self.exchange.privatePostV5PositionTradingStop(params)
 
             if response and str(response.get('retCode')) == '0':
-                ap_str = f", 활성화가=${active_price:.4f}" if active_price else ""
-                logger.info(f"트레일링 스톱 설정: {symbol} | 거리=${trailing_stop:.4f}{ap_str}")
+                ap_str = f", active={active_price}" if active_price else ""
+                logger.info(f"트레일링 스톱 설정: {symbol} | dist={trailing_stop}{ap_str}")
                 return True
             else:
-                logger.error(f"트레일링 스톱 설정 실패: {response}")
+                ret_msg = response.get('retMsg', '') if response else ''
+                logger.error(f"트레일링 스톱 설정 실패 ({symbol}): {ret_msg}")
                 return False
 
         except Exception as e:
-            logger.error(f"트레일링 스톱 설정 실패: {e}")
+            logger.error(f"트레일링 스톱 설정 실패 ({symbol}): {e}")
             return False
 
     def set_stop_loss(self, symbol: str, stop_loss: float) -> bool:
